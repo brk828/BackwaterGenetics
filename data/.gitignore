@@ -1,4 +1,5 @@
 # GIT will ignore all files in this directory except the gitignore file itself.
 
-*
+NFWGAnalysis.RData
+BWScanningIndex.RData
 !.gitignore
