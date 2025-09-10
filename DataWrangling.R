@@ -52,14 +52,14 @@ StudyBWContacts <- BWContacts %>%
   filter(LID > 1042 & LID < 1049| LID == 592) %>%
   mutate(ScanHr = hour(DateTime),
          ScanMonth = month(DateTime)) %>% 
-  select(EID, PIT, PITIndex, Date, ScanHr, ScanMonth, Location, Species = species, tagging_date) 
+  select(EID, PIT, PITIndex, Date, ScanHr, ScanMonth, LID, Location, Species = species, tagging_date) 
 
 # Use data.tables to reduce contacts to summary per PIT-Date-Hour
 StudyBWContactsdt <- as.data.table(StudyBWContacts)
 
 StudyBWContacts <- StudyBWContactsdt[
   , .(count = .N), 
-  by = .(EID, Location, Species, PIT, PITIndex, Date, ScanHr, ScanMonth, tagging_date)] %>%
+  by = .(EID, Location, LID, Species, PIT, PITIndex, Date, ScanHr, ScanMonth, tagging_date)] %>%
   as.data.frame() %>%
   mutate(ScanFY = as.integer(ifelse(ScanMonth > 9, year(Date)+1, year(Date))),
          ScanMonthName = format(Date, "%b"))
