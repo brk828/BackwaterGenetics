@@ -7,7 +7,7 @@ SizeClass2 <- 350 # TL (mm) cutoff for Size Class 2
 SizeClass3 <- 500 # TL (mm) cutoff for Size Class 3
 
 # Load useful lab functions
-source("c:/GIT/RDependencies/LabFunctions.R")
+source("LabFunctions.R")
 
 packages(dplyr)     # data manipulation
 packages(lubridate) # date and time manipulation
@@ -194,8 +194,9 @@ StudyBWNFWGTagging <- StudyBWNFWGTagging %>%
 # Summarize all tagged fish
 BackwaterSummary <- StudyBWNFWGTagging %>%
   group_by(species, location, collection_date, event, disposition, sex) %>%
-  summarise(count = n(), meanTL = as.integer(mean(total_length)), survivedDAL = sum(Survived),
-            survivedFY24 = sum(SurvivedFY24)) %>%
+  summarise(count = n(), meanTL = as.integer(mean(total_length)), 
+            minTL = min(total_length), maxTL = max(total_length),
+            survivedDAL = sum(Survived), survivedFY24 = sum(SurvivedFY24)) %>%
   ungroup() %>%
   mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3))
 

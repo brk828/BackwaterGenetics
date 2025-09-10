@@ -34,7 +34,7 @@ YumaStocking <- StockingBW %>%
 
 YumaReleaseFY <- unique(YumaStocking$ReleaseFY)
 #zero inflated model for Yuma Cove backwater.
-DALModelYuma <- glmmTMB(Survived ~ sex + total_length * ReleaseFY,
+DALModelYuma <- glmmTMB(Survived ~ sex * total_length * ReleaseFY,
                     family = binomial(link = 'logit'), 
                     data = YumaStocking)
 
@@ -53,16 +53,17 @@ PredictedYuma <- cbind(PredictorsYuma, fit, lowerCI, upperCI)
 rm(PredictorsYuma, PredictionsYuma, lowerCI, upperCI, fit)
 
 # Yuma Figure
-YumaDALSurvival <- ggplot(PredictedYuma, 
+YumaDALSurvival <- ggplot(PredictedYuma %>% filter(ReleaseFY != 2015), 
                      aes(x = total_length, y = fit, color = sex)) + 
   geom_line(linewidth = 1) + 
-  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'Sex') + 
+  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'sex') + 
   theme(plot.margin = margin(.75,.75,.75,.75, unit = 'cm'), 
         axis.title.x = element_text(vjust = -2), axis.title.y = element_text(vjust = 5)) +
   geom_ribbon(aes(x = total_length, ymin = lowerCI, ymax = upperCI, fill = sex), alpha = 0.3) + 
   facet_wrap(~ReleaseFY, nrow=3) +
   geom_point(data = StockingBWSurvivalSummary %>%
-               filter(location_id == 592, ReleaseFY != 2020, TLClass >=350), 
+               filter(location_id == 592, ReleaseFY != 2020, 
+                      ReleaseFY != 2015, TLClass >=350), 
              aes(x = TLClass, y = ContactedProp)) 
 
 
@@ -76,7 +77,7 @@ IPXYTEStocking <- StockingBW %>%
 IPXYTELocations <- unique(IPXYTEStocking$location)
 
 #zero inflated model for IP XYTE stockings
-DALModelIPXYTE <- glmmTMB(Survived ~ sex + total_length * location,
+DALModelIPXYTE <- glmmTMB(Survived ~ sex * total_length * location,
                         family = binomial(link = 'logit'), 
                         data = IPXYTEStocking)
 
@@ -97,7 +98,7 @@ rm(PredictionsIPXYTE, PredictorsIPXYTE, lowerCI, upperCI, fit)
 IPXYTEDALSurvival <- ggplot(PredictedIPXYTE, 
                           aes(x = total_length, y = fit, color = sex)) + 
   geom_line(linewidth = 1) + 
-  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'Sex') + 
+  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'sex') + 
   theme(plot.margin = margin(.75,.75,.75,.75, unit = 'cm'), 
         axis.title.x = element_text(vjust = -2), axis.title.y = element_text(vjust = 5)) +
   geom_ribbon(aes(x = total_length, ymin = lowerCI, ymax = upperCI, fill = sex), alpha = 0.3) + 
@@ -116,7 +117,7 @@ IPGIEL2017Stocking <- StockingBW %>%
 IPGIEL2017Locations <- unique(IPGIEL2017Stocking$location)
 
 #zero inflated model for IP GIEL 2017
-DALModelIPGIEL2017 <- glmmTMB(Survived ~ sex + total_length * location,
+DALModelIPGIEL2017 <- glmmTMB(Survived ~ sex * total_length * location,
                           family = binomial(link = 'logit'), 
                           data = IPGIEL2017Stocking)
 
@@ -137,7 +138,7 @@ rm(PredictionsIPGIEL2017, PredictorsIPGIEL2017, lowerCI, upperCI, fit)
 IPGIEL2017DALSurvival <- ggplot(PredictedIPGIEL2017, 
                             aes(x = total_length, y = fit, color = sex)) + 
   geom_line(linewidth = 1) + 
-  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'Sex') + 
+  labs(x = 'Total Length (mm)', y = 'Detection Probability', color = 'sex') + 
   theme(plot.margin = margin(.75,.75,.75,.75, unit = 'cm'), 
         axis.title.x = element_text(vjust = -2), axis.title.y = element_text(vjust = 5)) +
   geom_ribbon(aes(x = total_length, ymin = lowerCI, ymax = upperCI, fill = sex), alpha = 0.3) + 
@@ -154,3 +155,15 @@ ContactsFYMonthly <- StudyBWContacts %>%
   group_by(Location, ScanFY, ScanMonthFY, ScanMonthName) %>%
   summarise(Contacts = n(), Uniques = n_distinct(PITIndex)) %>%
   ungroup()
+
+png(paste0("output/YumaCoveSurvival", SurvivalDAL, "DaysPostStocking.png"), width = 6, height = 4, units = 'in', res = 300)   
+YumaDALSurvival
+dev.off()
+
+png(paste0("output/IPXYTESurvival", SurvivalDAL, "DaysPostStocking.png"), width = 6, height = 4, units = 'in', res = 300)   
+IPXYTEDALSurvival
+dev.off()
+
+png(paste0("output/IPGIEL2017Survival", SurvivalDAL, "DaysPostStocking.png"), width = 6, height = 4, units = 'in', res = 300)   
+IPGIEL2017DALSurvival
+dev.off()
