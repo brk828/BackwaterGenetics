@@ -196,7 +196,8 @@ BackwaterSummary <- StudyBWNFWGTagging %>%
   group_by(species, location, collection_date, event, disposition, sex) %>%
   summarise(count = n(), meanTL = as.integer(mean(total_length)), survivedDAL = sum(Survived),
             survivedFY24 = sum(SurvivedFY24)) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3))
 
 # Summary for stockings only
 StockingBackwaterSummary <- BackwaterSummary %>%
@@ -207,7 +208,7 @@ ScanningBackwaterSummary <- StudyBWContacts %>%
   arrange(Location, ScanFY) %>%
   group_by(Location, ScanFY) %>%
   summarise(Contacts = n(), Uniques = n_distinct(PITIndex)) %>%
-  ungroup()
+  ungroup() 
 
 # Create workbook for contacts with NO PITIndex
 wb <- createWorkbook() # creates object to hold workbook sheets
