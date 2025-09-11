@@ -11,6 +11,7 @@ packages(glmmTMB) # General linear mixed model analysis built on TMB automatic d
 packages(ggplot2) # Plotting
 packages(tidyr) # pivot table
 packages(RMark) # MCR analysis
+packages(stringr) # string manipulations and function
 
 StockingBW <- StudyBWNFWGTagging %>%
   filter(event == "stocking", collection_date < as.Date("2024-10-01"), sex != "U") %>%
