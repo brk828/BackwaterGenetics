@@ -13,9 +13,9 @@ packages(tidyr) # pivot table
 packages(RMark) # MCR analysis
 packages(stringr) # string manipulations and function
 
-StockingBW <- StudyBWNFWGTagging %>%
-  filter(event == "stocking", collection_date < as.Date("2024-10-01"), sex != "U") %>%
-  rename(ReleaseDate = collection_date) %>%
+StockingBW <- StudyBWNFWGAnalysis %>%
+  filter(event == "stocking", first_date < as.Date("2024-10-01")) %>%
+  rename(ReleaseDate = first_date) %>%
   mutate(ReleaseFY = as.factor(ifelse(month(ReleaseDate) > 9, year(ReleaseDate)+1, year(ReleaseDate))),
          ReleaseMonth = as.integer(month(ReleaseDate)),
          ReleaseMonthName = format(ReleaseDate, "%b"),
@@ -39,7 +39,7 @@ YumaReleaseFY <- unique(YumaStocking$ReleaseFY)
 #zero inflated model for Yuma Cove backwater.
 DALModelYuma <- glmmTMB(Survived ~ sex * total_length * ReleaseFY,
                     family = binomial(link = 'logit'), 
-                    data = YumaStocking)
+                    data = YumaStocking %>% filter(sex!= "U"))
 
 #creating a predictions data.frame from model for graphing
 PredictorsYuma <- expand.grid(total_length = as.integer(seq(350, 500, by = 10)), 
@@ -66,7 +66,7 @@ YumaDALSurvival <- ggplot(PredictedYuma %>% filter(ReleaseFY != 2015),
   facet_wrap(~ReleaseFY, nrow=3) +
   geom_point(data = StockingBWSurvivalSummary %>%
                filter(location_id == 592, ReleaseFY != 2020, 
-                      ReleaseFY != 2015, TLClass >=350), 
+                      ReleaseFY != 2015, TLClass >=350, sex != "U"), 
              aes(x = TLClass, y = ContactedProp)) 
 
 

@@ -67,7 +67,23 @@ StudyBWContacts <- StudyBWContactsdt[
 rm(StudyBWContactsdt)
 
 StudyBWNFWG <- NFWGAnalysis %>%
-  filter(location_id > 1042 & location_id < 1049| location_id == 592) 
+  filter(location_id > 1042 & location_id < 1049| location_id == 592) %>% 
+  arrange(PITIndex, collection_date) %>%
+  group_by(PITIndex, location) %>%
+  mutate(FirstRecord = ifelse(row_number() > 1, "no", "yes")) %>%
+  ungroup()
+
+# One pond to pond transfer 003C06F28D
+# No long issue as First record is per location
+StudyBWNFWGTaggingN <- StudyBWNFWG %>%
+  filter(pit1_new == "yes", FirstRecord == "no")
+
+# Any first record that doesn't have a pit1_new "yes" should have a tagging_date
+# prior to first record collection date. Except for pond to pond transfer if 
+# if tagging and capture transfer happened on same day.
+FirstRecordNotTagging <- StudyBWNFWG %>%
+  filter(FirstRecord == "yes", collection_date > as.Date("2013-01-01"),
+         pit1_new == "no", tagging_date >= collection_date)
 
 StudyBWEffort <- BWEffort %>%
   filter(LID > 1042 & LID < 1049| LID == 592) %>%
@@ -128,16 +144,16 @@ ContactSummaryDuplicateLocations <- ContactsSummary %>%
   summarise(SecondContacts = n(), SecondDate = min(SecondDate), SecondEID = min(SecondEID)) %>%
   ungroup()
 
-# Dataframe of first tagging (capture tagged or stocked)
+# Dataframe of first record fish in backwater adding contact data
 # Cannot rely on pit1_new alone as some fish were tagged in hatchery
 # Add summary contact data and calculate tagging DAL
-StudyBWNFWGTagging <- StudyBWNFWG %>% 
-  filter(pit1_new == "yes"| event == "stocking") %>%
-  select(collection_date, location, disposition, event, fin_clip, primary_method,
-         species, PITIndex, sex, total_length, tagging_date, location_id) %>%
+StudyBWNFWGFirstRecord <- StudyBWNFWG %>% 
+  filter(FirstRecord == "yes") %>%
+  select(first_date = collection_date, location, disposition, event, fin_clip, primary_method,
+         species, PITIndex, sex, total_length, location_id) %>%
   left_join(ContactsSummary, by = c("PITIndex", "location" = "Location")) %>%
   mutate(MaxDAL = ifelse(!is.na(MaxScanDate), 
-                as.numeric(difftime(MaxScanDate, collection_date, units = "days")),
+                as.numeric(difftime(MaxScanDate, first_date, units = "days")),
                 0), 
          contacts = no_na_df(contacts)) %>%
   select(-ScanDAL) %>%
@@ -145,16 +161,9 @@ StudyBWNFWGTagging <- StudyBWNFWG %>%
          SurvivedFY24 = ifelse(!is.na(MaxScanDate) & 
                                  MaxScanDate > as.Date("2024-09-30"), 1, 0))
 
-# Check for duplicates, there should be none
-TaggingDuplicates <- StudyBWNFWGTagging %>%
-  group_by(PITIndex) %>%
-  summarise(count = n()) %>%
-  ungroup() %>%
-  filter(count >1)
-
 # Look for Tags with an NFWG record but no tagging record
 ContactNoTagging <- ContactsSummary %>%
-  anti_join(StudyBWNFWGTagging, by = "PITIndex") %>%
+  anti_join(StudyBWNFWGFirstRecord, by = "PITIndex") %>%
   filter(ScanDAL > SurvivalDAL)
 
 # Fish holdovers scanned during study period but released prior
@@ -184,16 +193,16 @@ saveWorkbook(wb, paste0("output/BWIssues",
 
 
 # filter out older tagging records
-StudyBWNFWGTagging <- StudyBWNFWGTagging %>%
-  filter(collection_date > as.Date("2013-01-01") & 
+StudyBWNFWGAnalysis <- StudyBWNFWGFirstRecord %>%
+  filter(first_date > as.Date("2013-01-01") & 
            location_id == 592|
-           collection_date > as.Date("2016-01-01") & 
+           first_date > as.Date("2016-01-01") & 
            location_id > 1042 & 
            location_id < 1049)
 
 # Summarize all tagged fish
-BackwaterSummary <- StudyBWNFWGTagging %>%
-  group_by(species, location, collection_date, event, disposition, sex) %>%
+BackwaterSummary <- StudyBWNFWGAnalysis %>%
+  group_by(species, location, first_date, event, disposition, sex) %>%
   summarise(count = n(), meanTL = as.integer(mean(total_length)), 
             minTL = min(total_length), maxTL = max(total_length),
             survivedDAL = sum(Survived), survivedFY24 = sum(SurvivedFY24)) %>%
@@ -202,8 +211,8 @@ BackwaterSummary <- StudyBWNFWGTagging %>%
 
 # Summary for stockings only
 StockingBackwaterSummary <- BackwaterSummary %>%
-  filter(event == "stocking", collection_date < as.Date("2024-10-01")) %>%
-  rename(release_date = collection_date)
+  filter(event == "stocking", first_date < as.Date("2024-10-01")) %>%
+  rename(release_date = first_date)
 
 ScanningBackwaterSummary <- StudyBWContacts %>%
   arrange(Location, ScanFY) %>%
@@ -222,7 +231,7 @@ writeData(wb, "ScanningBackwaterSummary", ScanningBackwaterSummary) # write data
 saveWorkbook(wb, paste0("output/StockingBackwaterSummary",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
-save(StudyBWNFWG, StudyBWNFWGTagging,StudyBWEffort, StudyBWContacts, SurvivalDAL, 
+save(StudyBWNFWG, StudyBWNFWGAnalysis,StudyBWEffort, StudyBWContacts, SurvivalDAL, 
      SizeClass2, SizeClass3, no_na, no_na_df, packages,
      file = "data/ReportingData.RData")
 
