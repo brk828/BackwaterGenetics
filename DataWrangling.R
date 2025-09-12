@@ -45,7 +45,7 @@ if(file.exists("data/NFWGAnalysis.RData")){
   load("data/NFWGAnalysis.RData")
 }
 
-rm(split_hourly, download_nfwg, download_basin, download_backwater)
+rm(split_hourly, download_nfwg, download_genetics, download_PITindex, download_basin, download_backwater, euclid)
   
 # Restrict PITindex dataframe to study backwaters
 StudyBWContacts <- BWContacts %>%
@@ -152,14 +152,17 @@ StudyBWNFWGFirstRecord <- StudyBWNFWG %>%
   select(first_date = collection_date, location, disposition, event, fin_clip, primary_method,
          species, PITIndex, sex, total_length, location_id) %>%
   left_join(ContactsSummary, by = c("PITIndex", "location" = "Location")) %>%
-  mutate(MaxDAL = ifelse(!is.na(MaxScanDate), 
+  mutate(release_month = month(first_date),
+         release_year = year(first_date),
+         MaxDAL = ifelse(!is.na(MaxScanDate), 
                 as.numeric(difftime(MaxScanDate, first_date, units = "days")),
                 0), 
          contacts = no_na_df(contacts)) %>%
   select(-ScanDAL) %>%
   mutate(Survived = ifelse(MaxDAL > SurvivalDAL, 1, 0),
          SurvivedFY24 = ifelse(!is.na(MaxScanDate) & 
-                                 MaxScanDate > as.Date("2024-09-30"), 1, 0))
+                                 MaxScanDate > as.Date("2024-09-30"), 1, 0),
+         MaxScanDate = if_else(is.na(MaxScanDate), first_date, MaxScanDate))
 
 # Look for Tags with an NFWG record but no tagging record
 ContactNoTagging <- ContactsSummary %>%
@@ -167,8 +170,8 @@ ContactNoTagging <- ContactsSummary %>%
   filter(ScanDAL > SurvivalDAL)
 
 # Fish holdovers scanned during study period but released prior
-StudyBWNFWGTaggingHoldover <- StudyBWNFWGTagging %>%
-  filter(collection_date < as.Date("2013-01-01"),
+StudyBWNFWGTaggingHoldover <- StudyBWNFWGFirstRecord %>%
+  filter(first_date < as.Date("2013-01-01"),
          MaxScanDate > as.Date("2013-01-01"))
 
 # Create workbook for contacts with NO PITIndex
@@ -202,17 +205,19 @@ StudyBWNFWGAnalysis <- StudyBWNFWGFirstRecord %>%
 
 # Summarize all tagged fish
 BackwaterSummary <- StudyBWNFWGAnalysis %>%
-  group_by(species, location, first_date, event, disposition, sex) %>%
+  group_by(species, location, release_year, release_month, event) %>%
   summarise(count = n(), meanTL = as.integer(mean(total_length)), 
             minTL = min(total_length), maxTL = max(total_length),
             survivedDAL = sum(Survived), survivedFY24 = sum(SurvivedFY24)) %>%
   ungroup() %>%
-  mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3))
+  mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3),
+         PorpSurvivedFY24 = round(as.numeric(survivedFY24/count), 3)) %>%
+  arrange(location, release_year, release_month) %>%
+  filter(release_year < year(Sys.Date())-1)
 
 # Summary for stockings only
 StockingBackwaterSummary <- BackwaterSummary %>%
-  filter(event == "stocking", first_date < as.Date("2024-10-01")) %>%
-  rename(release_date = first_date)
+  filter(event == "stocking") 
 
 ScanningBackwaterSummary <- StudyBWContacts %>%
   arrange(Location, ScanFY) %>%

@@ -1,6 +1,6 @@
 
    Program  MARK  - Survival Rate Estimation with Capture-Recapture Data
-   gfortran(dble) Vers. 9.0 Jan 2019    10-Sep-2025 16:55:06    Page  001
+   gfortran(dble) Vers. 9.0 Jan 2019    12-Sep-2025 13:59:49    Page  001
  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  
    This version was compiled by GCC version 8.1.0 using the options: 
@@ -37,7 +37,7 @@
    CPU Time for the last procedure was 0.01 seconds.     
 
   Program  MARK  - Survival Rate Estimation with Capture-Recapture Data
-   gfortran(dble) Vers. 9.0 Jan 2019    10-Sep-2025 16:55:06    Page  002
+   gfortran(dble) Vers. 9.0 Jan 2019    12-Sep-2025 13:59:49    Page  002
  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  
 
@@ -87,7 +87,7 @@
   INPUT ---       rlabel(5)=p g1 c1 a3 t4;
 
   Program  MARK  - Survival Rate Estimation with Capture-Recapture Data
-   gfortran(dble) Vers. 9.0 Jan 2019    10-Sep-2025 16:55:06    Page  003
+   gfortran(dble) Vers. 9.0 Jan 2019    12-Sep-2025 13:59:49    Page  003
  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  
 
@@ -98,7 +98,7 @@
  Effective Sample Size = 6214
 
  Number of function evaluations was 25 for 5 parameters.
- Time for numerical optimization was 0.03 seconds.     
+ Time for numerical optimization was 0.01 seconds.     
  -2logL { Phi(~age2)p(~time2) } = 10898.582     
  Penalty { Phi(~age2)p(~time2) } = 0.0000000     
  Gradient { Phi(~age2)p(~time2) }:
@@ -148,10 +148,10 @@
      4:p g1 c1 a1 t2          0.6462759       0.0098431       0.6267541       0.6653219                          
      5:p g1 c1 a3 t4          0.9670547       0.0046194       0.9566952       0.9750008                          
 
-   CPU Time for the last procedure was 0.03 seconds.     
+   CPU Time for the last procedure was 0.01 seconds.     
 
   Program  MARK  - Survival Rate Estimation with Capture-Recapture Data
-   gfortran(dble) Vers. 9.0 Jan 2019    10-Sep-2025 16:55:06    Page  004
+   gfortran(dble) Vers. 9.0 Jan 2019    12-Sep-2025 13:59:49    Page  004
  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  
 
@@ -160,9 +160,9 @@
 
      CPU Time in minutes for this job was 0.00
 
-     Time Start = 16:55:06.459   Time End = 16:55:06.916
+     Time Start = 13:59:49.016   Time End = 13:59:49.110
 
-     Wall Clock Time in minutes for this job was 0.01
+     Wall Clock Time in minutes for this job was 0.00
 
 
           E X E C U T I O N   S U C C E S S F U L 
