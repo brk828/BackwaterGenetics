@@ -50,7 +50,7 @@ CrossDFIPXYTE <- SurvDaysXYTEIP %>%
 
 CrossDFIPGIEL <- SurvDaysGIELIP %>%
   mutate(key = 1) %>%
-  full_join(StudyBWXYTEIP %>% mutate(key = 1), 
+  full_join(StudyBWGIELIP %>% mutate(key = 1), 
             by = "key", relationship = "many-to-many") %>%
   select(-key)
 
