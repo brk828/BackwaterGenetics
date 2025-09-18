@@ -101,17 +101,47 @@ SurvivorCountsIPGIEL <- expand_grid(
     by = c("Date", "sex", "location")) %>%
   mutate(Count = replace_na(Count, 0))
 
+TotalCountYuma <- SurvivorCountsYuma %>%
+  group_by(Date) %>%
+  summarise(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(sex = "Total") %>%
+  ungroup()
+
+TotalCountIPXYTE <- SurvivorCountsIPXYTE %>%
+  group_by(Date, location) %>%
+  summarise(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(sex = "Total") %>%
+  ungroup()
+
+TotalCountIPGIEL <- SurvivorCountsIPGIEL %>%
+  group_by(Date, location) %>%
+  summarise(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(sex = "Total") %>%
+  ungroup()
+
+SurvivorCountsYuma$sex <- factor(SurvivorCountsYuma$sex, levels = c("Total", "F", "M", "U"))
+TotalCountYuma$sex <- factor(TotalCountYuma$sex, levels = c("Total", "F", "M", "U"))
+
+SurvivorCountsIPXYTE$sex <- factor(SurvivorCountsIPXYTE$sex, levels = c("Total", "F", "M", "U"))
+TotalCountIPXYTE$sex <- factor(TotalCountIPXYTE$sex, levels = c("Total", "F", "M", "U"))
+
+SurvivorCountsIPGIEL$sex <- factor(SurvivorCountsIPGIEL$sex, levels = c("Total", "F", "M", "U"))
+TotalCountIPGIEL$sex <- factor(TotalCountIPGIEL$sex, levels = c("Total", "F", "M", "U"))
+
 KnownSurvivalPlotYuma <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
   geom_line(aes(color = sex, linetype = sex)) +
   scale_x_date(date_breaks = "1 month",
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+        axis.text = element_text(size = 12),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
-  labs(x = "Date", y = "Count")
-
+  labs(x = "Date", y = "Count") +
+  geom_line(data = TotalCountYuma,
+            aes(x = Date, y = Count, color = sex, linetype = sex),
+            linewidth = 1.2, alpha = 0.4)
 
 KnownSurvivalPlotYuma
 
@@ -121,11 +151,15 @@ KnownSurvivalPlotIPXYTE <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+        axis.text = element_text(size = 12),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
   labs(x = "Date", y = "Count") +
-  facet_wrap(~location, nrow=3) 
+  facet_wrap(~location, nrow=3) +
+  geom_line(data = TotalCountIPXYTE,
+            aes(x = Date, y = Count, color = sex, linetype = sex),
+            linewidth = 1.2, alpha = 0.4)
 
 KnownSurvivalPlotIPXYTE
 
@@ -135,10 +169,22 @@ KnownSurvivalPlotIPGIEL <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+        axis.text = element_text(size = 12),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
   labs(x = "Date", y = "Count") +
-  facet_wrap(~location, nrow=3) 
+  facet_wrap(~location, nrow=3) +
+  geom_line(data = TotalCountIPGIEL,
+            aes(x = Date, y = Count, color = sex, linetype = sex),
+            linewidth = 1.2, alpha = 0.4)
 
 KnownSurvivalPlotIPGIEL
+
+rm(SurvivorCountsIPXYTE, SurvivorCountsIPGIEL, SurvivorCountsYuma, CrossDFYuma, CrossDFIPXYTE, 
+   CrossDFIPGIEL, SurvDaysXYTEIP, SurvDaysGIELIP, SurvDaysYuma)
+
+
+save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvivalCounts.RData")
+
+
