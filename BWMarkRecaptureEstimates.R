@@ -146,3 +146,15 @@ IPGIELEstimatePlot <- ggplot(BWEstimates %>%
             linewidth = 1.2, alpha = 0.3)
 
 IPGIELEstimatePlot
+
+png(paste0("output/YumaEstimatePlot.png"), width = 6, height = 4, units = 'in', res = 300)   
+YumaEstimatePlot
+dev.off()
+
+png(paste0("output/IPXYTEEstimatePlot.png"), width = 6, height = 4, units = 'in', res = 300)   
+IPXYTEEstimatePlot
+dev.off()
+
+png(paste0("output/IPGIELEstimatePlot.png"), width = 6, height = 4, units = 'in', res = 300)   
+IPGIELEstimatePlot
+dev.off()

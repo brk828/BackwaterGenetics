@@ -184,6 +184,17 @@ KnownSurvivalPlotIPGIEL
 rm(SurvivorCountsIPXYTE, SurvivorCountsIPGIEL, SurvivorCountsYuma, CrossDFYuma, CrossDFIPXYTE, 
    CrossDFIPGIEL, SurvDaysXYTEIP, SurvDaysGIELIP, SurvDaysYuma)
 
+png(paste0("output/KnownSurvivalPlotYuma.png"), width = 6, height = 4, units = 'in', res = 300)   
+KnownSurvivalPlotYuma
+dev.off()
+
+png(paste0("output/KnownSurvivalPlotIPXYTE.png"), width = 6, height = 4, units = 'in', res = 300)   
+KnownSurvivalPlotIPXYTE
+dev.off()
+
+png(paste0("output/KnownSurvivalPlotIPGIEL.png"), width = 6, height = 4, units = 'in', res = 300)   
+KnownSurvivalPlotIPGIEL
+dev.off()
 
 save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvivalCounts.RData")
 
