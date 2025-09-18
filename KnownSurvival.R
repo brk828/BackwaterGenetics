@@ -6,6 +6,7 @@ load("data/ReportingData.RData")
 packages(dplyr)     # data manipulation
 packages(lubridate) # date and time manipulation
 packages(ggplot2) # Plotting
+packages(tidyr) # replace_na for dataframes function plus others
 
 # If MaxScanDay is null, make it the release or tagging date of the fish
 # change juvenile to unknown sex to simplify sexes
@@ -62,11 +63,28 @@ KnownSurvivalYuma <- CrossDFYuma %>%
          Survived == 1) %>%
   select(Date, PITIndex, first_date, sex, total_length, event, MaxScanDate, MaxDAL) 
 
+SurvivorCountsYuma <- expand_grid(
+  Date = SurvDaysYuma$Date,
+  sex = unique(KnownSurvivalYuma$sex)) %>% 
+  left_join(KnownSurvivalYuma %>%
+      count(Date, sex, name = "Count"),
+    by = c("Date", "sex")) %>%
+  mutate(Count = replace_na(Count, 0))
+
 KnownSurvivalIPXYTE <- CrossDFIPXYTE %>% 
   filter(first_date <= Date &
            MaxScanDate >= Date, 
          Survived == 1) %>%
   select(location, Date, PITIndex, first_date, sex, total_length, event, MaxScanDate, MaxDAL) 
+
+SurvivorCountsIPXYTE <- expand_grid(
+  Date = SurvDaysXYTEIP$Date,
+  sex = unique(KnownSurvivalIPXYTE$sex),
+  location = unique(KnownSurvivalIPXYTE$location)) %>% 
+  left_join(KnownSurvivalIPXYTE %>%
+      count(Date, sex, location, name = "Count"),
+    by = c("Date", "sex", "location")) %>%
+  mutate(Count = replace_na(Count, 0))
 
 KnownSurvivalIPGIEL <- CrossDFIPGIEL %>% 
   filter(first_date <= Date &
@@ -74,9 +92,18 @@ KnownSurvivalIPGIEL <- CrossDFIPGIEL %>%
          Survived == 1) %>%
   select(location, Date, PITIndex, first_date, sex, total_length, event, MaxScanDate, MaxDAL) 
 
-KnownSurvivalPlotYuma <- ggplot(KnownSurvivalYuma, aes(x = Date)) +
-  geom_line(aes(color = sex, linetype = sex), stat = "count", width = 1) + 
-  scale_x_date(date_breaks = "1 month", 
+SurvivorCountsIPGIEL <- expand_grid(
+  Date = SurvDaysGIELIP$Date,
+  sex = unique(KnownSurvivalIPGIEL$sex),
+  location = unique(KnownSurvivalIPGIEL$location)) %>%
+  left_join(KnownSurvivalIPGIEL %>%
+      count(Date, sex, location, name = "Count"),
+    by = c("Date", "sex", "location")) %>%
+  mutate(Count = replace_na(Count, 0))
+
+KnownSurvivalPlotYuma <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
+  geom_line(aes(color = sex, linetype = sex)) +
+  scale_x_date(date_breaks = "1 month",
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
@@ -85,11 +112,12 @@ KnownSurvivalPlotYuma <- ggplot(KnownSurvivalYuma, aes(x = Date)) +
         axis.line = element_line(color = "black")) +
   labs(x = "Date", y = "Count")
 
+
 KnownSurvivalPlotYuma
 
-KnownSurvivalPlotIPXYTE <- ggplot(KnownSurvivalIPXYTE, aes(x = Date)) +
-  geom_line(aes(color = sex, linetype = sex), stat = "count", width = 1) + 
-  scale_x_date(date_breaks = "1 month", 
+KnownSurvivalPlotIPXYTE <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)) +
+  geom_line(aes(color = sex, linetype = sex)) +
+  scale_x_date(date_breaks = "1 month",
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
@@ -101,9 +129,9 @@ KnownSurvivalPlotIPXYTE <- ggplot(KnownSurvivalIPXYTE, aes(x = Date)) +
 
 KnownSurvivalPlotIPXYTE
 
-KnownSurvivalPlotIPGIEL <- ggplot(KnownSurvivalIPGIEL, aes(x = Date)) +
-  geom_line(aes(color = sex, linetype = sex), stat = "count", width = 1) + 
-  scale_x_date(date_breaks = "1 month", 
+KnownSurvivalPlotIPGIEL <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)) +
+  geom_line(aes(color = sex, linetype = sex)) +
+  scale_x_date(date_breaks = "1 month",
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
