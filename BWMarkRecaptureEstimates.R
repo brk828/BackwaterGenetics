@@ -94,8 +94,7 @@ YumaEstimatePlot <- ggplot(BWEstimates %>%
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   scale_y_continuous(limits = c(0, NA)) +
-  labs(x = "Year", y = "Estimate",
-       title = "XYTE population estimates with 95% CI, Yuma Cove backwater") +
+  labs(x = "Year", y = "Estimate") +
   theme_minimal() +
   theme(axis.text = element_text(size = 11),
         axis.line = element_line(color = "black"),
@@ -114,8 +113,7 @@ IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   scale_y_continuous(limits = c(0, NA)) +
-  labs(x = "Year", y = "Estimate",
-       title = "XYTE population estimates with 95% CI, Imperial Ponds") +
+  labs(x = "Year", y = "Estimate") +
   theme_minimal() +
   theme(axis.text = element_text(size = 11),
         axis.line = element_line(color = "black"),
@@ -134,8 +132,7 @@ IPGIELEstimatePlot <- ggplot(BWEstimates %>%
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
   scale_y_continuous(limits = c(0, NA)) +
-  labs(x = "Year", y = "Estimate",
-       title = "GIEL population estimates with 95% CI, Imperial Ponds") +
+  labs(x = "Year", y = "Estimate") +
   theme_minimal() +
   theme(axis.text = element_text(size = 11),
         axis.line = element_line(color = "black"),

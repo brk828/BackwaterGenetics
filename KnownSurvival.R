@@ -7,6 +7,7 @@ packages(dplyr)     # data manipulation
 packages(lubridate) # date and time manipulation
 packages(ggplot2) # Plotting
 packages(tidyr) # replace_na for dataframes function plus others
+packages(openxlsx) # package openxlsx is required to create to Excel files
 
 # If MaxScanDay is null, make it the release or tagging date of the fish
 # change juvenile to unknown sex to simplify sexes
@@ -134,7 +135,7 @@ KnownSurvivalPlotYuma <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 12),
+        axis.text = element_text(size = 8),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
@@ -151,7 +152,7 @@ KnownSurvivalPlotIPXYTE <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 12),
+        axis.text = element_text(size = 8),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
@@ -169,7 +170,7 @@ KnownSurvivalPlotIPGIEL <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 12),
+        axis.text = element_text(size = 8),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
@@ -184,18 +185,67 @@ KnownSurvivalPlotIPGIEL
 rm(SurvivorCountsIPXYTE, SurvivorCountsIPGIEL, SurvivorCountsYuma, CrossDFYuma, CrossDFIPXYTE, 
    CrossDFIPGIEL, SurvDaysXYTEIP, SurvDaysGIELIP, SurvDaysYuma)
 
-png(paste0("output/KnownSurvivalPlotYuma.png"), width = 6, height = 4, units = 'in', res = 300)   
+png(paste0("output/KnownSurvivalPlotYuma.png"), width = 8, height = 5, units = 'in', res = 300)   
 KnownSurvivalPlotYuma
 dev.off()
 
-png(paste0("output/KnownSurvivalPlotIPXYTE.png"), width = 6, height = 4, units = 'in', res = 300)   
+png(paste0("output/KnownSurvivalPlotIPXYTE.png"), width = 8, height = 5, units = 'in', res = 300)   
 KnownSurvivalPlotIPXYTE
 dev.off()
 
-png(paste0("output/KnownSurvivalPlotIPGIEL.png"), width = 6, height = 4, units = 'in', res = 300)   
+png(paste0("output/KnownSurvivalPlotIPGIEL.png"), width = 8, height = 5, units = 'in', res = 300)   
 KnownSurvivalPlotIPGIEL
 dev.off()
 
 save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvivalCounts.RData")
 
+FebYumaSurvivors <- KnownSurvivalYuma %>%
+  filter(month(Date) == 2, day(Date) == 15) %>%
+  mutate(Species = "XYTE", Year = year(Date), location = "Yuma Cove backwater") %>% 
+  arrange(Year, PITIndex) %>%
+  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
 
+FebYumaCounts <- FebYumaSurvivors %>%
+  group_by(Species, location, Year) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+
+FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
+  filter(month(Date) == 2, day(Date) == 15) %>%
+  mutate(Species = "XYTE", Year = year(Date)) %>% 
+  arrange(location, Year, PITIndex) %>%
+  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
+
+FebIPXYTECounts <- FebIPXYTESurvivors %>%
+  group_by(Species, location, Year) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+  
+AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
+  filter(month(Date) == 4, day(Date) == 15) %>%
+  mutate(Species = "GIEL", Year = year(Date)) %>% 
+  arrange(location, Year, PITIndex) %>%
+  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
+
+AprIPGIELCounts <- AprIPGIELSurvivors %>%
+  group_by(Species, location, Year) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+
+SpawnCounts <- rbind(FebYumaCounts, FebIPXYTECounts, AprIPGIELCounts)
+# Create workbook for contacts with NO PITIndex
+wb <- createWorkbook() # creates object to hold workbook sheets
+addWorksheet(wb, "YumaFebSurvivors") # add worksheet
+writeData(wb, "YumaFebSurvivors", FebYumaSurvivors) # write dataframe
+
+addWorksheet(wb, "IPXYTEFebSurvivors") # add worksheet
+writeData(wb, "IPXYTEFebSurvivors", FebIPXYTESurvivors) # write dataframe
+
+addWorksheet(wb, "IPGIELAprSurvivors") # add worksheet
+writeData(wb, "IPGIELAprSurvivors", AprIPGIELSurvivors) # write dataframe
+
+addWorksheet(wb, "SpawnCounts") # add worksheet
+writeData(wb, "SpawnCounts", SpawnCounts) # write dataframe
+
+saveWorkbook(wb, paste0("output/BWSpawnSurvivors",
+                        format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
