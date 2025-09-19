@@ -236,7 +236,7 @@ writeData(wb, "ScanningBackwaterSummary", ScanningBackwaterSummary) # write data
 saveWorkbook(wb, paste0("output/StockingBackwaterSummary",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
-save(StudyBWNFWG, StudyBWNFWGAnalysis,StudyBWEffort, StudyBWContacts, SurvivalDAL, 
+save(StudyBWNFWG, StudyBWNFWGAnalysis, StudyBWEffort, StudyBWContacts, SurvivalDAL, 
      SizeClass2, SizeClass3, no_na, no_na_df, packages,
      file = "data/ReportingData.RData")
 

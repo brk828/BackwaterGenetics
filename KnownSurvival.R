@@ -201,9 +201,10 @@ save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvi
 
 FebYumaSurvivors <- KnownSurvivalYuma %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date), location = "Yuma Cove backwater") %>% 
+  mutate(Species = "XYTE", Year = year(Date), TagYear = year(first_date),
+         location = "Yuma Cove backwater") %>% 
   arrange(Year, PITIndex) %>%
-  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
 
 FebYumaCounts <- FebYumaSurvivors %>%
   group_by(Species, location, Year) %>%
@@ -212,9 +213,9 @@ FebYumaCounts <- FebYumaSurvivors %>%
 
 FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date)) %>% 
+  mutate(Species = "XYTE", Year = year(Date), TagYear = year(first_date)) %>% 
   arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
 
 FebIPXYTECounts <- FebIPXYTESurvivors %>%
   group_by(Species, location, Year) %>%
@@ -223,9 +224,9 @@ FebIPXYTECounts <- FebIPXYTESurvivors %>%
   
 AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
   filter(month(Date) == 4, day(Date) == 15) %>%
-  mutate(Species = "GIEL", Year = year(Date)) %>% 
+  mutate(Species = "GIEL", Year = year(Date), TagYear = year(first_date)) %>% 
   arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
 
 AprIPGIELCounts <- AprIPGIELSurvivors %>%
   group_by(Species, location, Year) %>%
@@ -249,3 +250,33 @@ writeData(wb, "SpawnCounts", SpawnCounts) # write dataframe
 
 saveWorkbook(wb, paste0("output/BWSpawnSurvivors",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
+
+IPXYTESurvivorsHistogram <- ggplot(FebIPXYTESurvivors %>%
+                                     filter(Year >= 2021), 
+                                   aes(x = total_length, fill = factor(TagYear))) +
+  geom_histogram(binwidth = 10, position = "stack", color = "black") +
+  facet_wrap(~ location + Year, ncol = 5) +
+  labs(
+    x = "Total Length (mm)",
+    y = "Count") +
+  theme_minimal()
+
+IPXYTESurvivorsHistogram
+
+IPGIELSurvivorsHistogram <- ggplot(AprIPGIELSurvivors %>%
+                                     filter(Year >= 2021), 
+                                   aes(x = total_length, fill = factor(TagYear))) +
+  geom_histogram(position = "stack", color = "black") +
+  facet_wrap(~ location + Year, ncol = 4) +
+  labs(
+    x = "Total Length (mm)",
+    y = "Count") +
+  theme_minimal()
+
+IPGIELSurvivorsHistogram
+
+AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
+  mutate(TLCM = as.integer(total_length*.10)) %>%
+  group_by(location, Year, TagYear, TLCM) %>%
+  summarise(Count = n()) %>%
+  ungroup()
