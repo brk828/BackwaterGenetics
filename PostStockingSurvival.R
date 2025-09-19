@@ -11,6 +11,7 @@ packages(ggplot2) # Plotting
 packages(tidyr) # pivot table
 packages(RMark) # MCR analysis
 packages(stringr) # string manipulations and function
+packages(broom.mixed) # cleanup results tables 
 
 StockingBW <- StudyBWNFWGAnalysis %>%
   filter(event == "stocking", first_date < as.Date("2024-10-01")) %>%
@@ -36,9 +37,24 @@ YumaStocking <- StockingBW %>%
 
 YumaReleaseFY <- unique(YumaStocking$ReleaseFY)
 #zero inflated model for Yuma Cove backwater.
-DALModelYuma <- glmmTMB(Survived ~ sex * total_length * ReleaseFY,
+DALModelYuma <- glmmTMB(Survived ~ sex + 
+                          total_length + 
+                          ReleaseFY,
                     family = binomial(link = 'logit'), 
                     data = YumaStocking %>% filter(sex!= "U"))
+
+# Tidy the model output
+YumaResultsTable <- broom.mixed::tidy(DALModelYuma, effects = "fixed", conf.int = TRUE)
+
+# Add significance stars
+YumaResultsTable <- YumaResultsTable %>%
+  mutate(signif = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
 
 #creating a predictions data.frame from model for graphing
 PredictorsYuma <- expand.grid(total_length = as.integer(seq(350, 500, by = 10)), 
@@ -79,9 +95,24 @@ IPXYTEStocking <- StockingBW %>%
 IPXYTELocations <- unique(IPXYTEStocking$location)
 
 #zero inflated model for IP XYTE stockings
-DALModelIPXYTE <- glmmTMB(Survived ~ sex * total_length * location,
+DALModelIPXYTE <- glmmTMB(Survived ~ sex + 
+                            total_length + 
+                            location,
                         family = binomial(link = 'logit'), 
                         data = IPXYTEStocking)
+
+# Tidy the model output
+IPXYTEResultsTable <- broom.mixed::tidy(DALModelIPXYTE, effects = "fixed", conf.int = TRUE)
+
+# Add significance stars
+IPXYTEResultsTable <- IPXYTEResultsTable %>%
+  mutate(signif = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
 
 PredictorsIPXYTE <- expand.grid(total_length = as.integer(seq(350, 500, by = 10)), 
                               location = IPXYTELocations,
@@ -119,9 +150,24 @@ IPGIEL2017Stocking <- StockingBW %>%
 IPGIEL2017Locations <- unique(IPGIEL2017Stocking$location)
 
 #zero inflated model for IP GIEL 2017
-DALModelIPGIEL2017 <- glmmTMB(Survived ~ sex * total_length * location,
+DALModelIPGIEL2017 <- glmmTMB(Survived ~ sex + 
+                                total_length +
+                                location,
                           family = binomial(link = 'logit'), 
                           data = IPGIEL2017Stocking)
+
+# Tidy the model output
+IPGIELResultsTable <- broom.mixed::tidy(DALModelIPGIEL2017, effects = "fixed", conf.int = TRUE)
+
+# Add significance stars
+IPGIELResultsTable <- IPGIELResultsTable %>%
+  mutate(signif = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ ""
+  ))
 
 PredictorsIPGIEL2017 <- expand.grid(total_length = as.integer(seq(230, 290, by = 5)), 
                                 location = IPGIEL2017Locations,
