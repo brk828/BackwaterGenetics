@@ -67,12 +67,63 @@ StudyBWContacts <- StudyBWContactsdt[
 rm(StudyBWContactsdt)
 
 StudyBWNFWG <- NFWGAnalysis %>%
-  filter(location_id > 1042 & location_id < 1049| location_id == 592) %>% 
+  filter(collection_date > as.Date("2013-01-01") & 
+           location_id == 592|
+           collection_date > as.Date("2016-01-01") & 
+           location_id > 1042 & 
+           location_id < 1049) %>%
+  mutate(CollectionYear = year(collection_date),
+         CollectionMonth = month(collection_date), 
+         SizeClass = ifelse(is.na(total_length), NA,
+                            ifelse(total_length >= SizeClass3, 3,
+                                   ifelse(total_length >= SizeClass2, 2, 1)))) %>%
   arrange(PITIndex, collection_date) %>%
   group_by(PITIndex, location) %>%
   mutate(FirstRecord = ifelse(row_number() > 1, "no", "yes")) %>%
   ungroup()
 
+  StudyBWCaptures <- StudyBWNFWG %>%
+    filter(event == "capture")
+  
+  StudyBWTransfers <- NFWGAnalysis %>%
+    filter(event == "transfer", SurfaceConnection == "open") %>%
+    filter(collection_date > as.Date("2013-01-01") & 
+             last_rearing == "Yuma Cove backwater"|
+             collection_date > as.Date("2016-01-01") & 
+             grepl("^IPCA", last_rearing)) %>%
+    mutate(Backwater = last_rearing, TransferLocation = location,
+           TransferDate = collection_date,
+           TransferYear = year(collection_date),
+           TransferMonth = month(collection_date),
+           SizeClass = ifelse(is.na(total_length), NA,
+                              ifelse(total_length >= SizeClass3, 3,
+                                     ifelse(total_length >= SizeClass2, 2, 1))))
+  
+  
+  TaggeBWTransfers <- StudyBWTransfers %>%
+    select(PITIndex, Backwater, TransferDate, TransferLocation) %>%
+    inner_join(StudyBWCaptures, by = "PITIndex") %>%
+    group_by(Backwater, TransferLocation, TransferDate, PITIndex) %>%
+    summarise(Count = n()) %>%
+    ungroup() %>%
+    mutate(Transfer = 1)
+  
+  StudyBWCaptureUniques <- StudyBWCaptures %>%
+    arrange(location, CollectionYear, CollectionMonth, PITIndex, collection_date) %>%
+    group_by(location, CollectionYear, CollectionMonth, PITIndex) %>%
+    summarise(Contacts = n(), 
+              FirstRecord = max(FirstRecord),
+              SizeClass = max(SizeClass),
+              total_length = max(total_length)) %>%
+    ungroup() %>%
+    left_join(TaggeBWTransfers %>%
+                select(-Count), 
+              by = c("CollectionYear" = "TransferYear",
+                     "CollectionMonth" = "TransferMonth",
+                     "PITIndex" = "PITIndex")) %>%
+    mutate(Transfer = if_else(is.na(Transfer), 0, 1))
+  
+  
 # One pond to pond transfer 003C06F28D
 # No long issue as First record is per location
 StudyBWNFWGTaggingN <- StudyBWNFWG %>%
@@ -116,7 +167,7 @@ ContactsNoNFWG <- StudyBWContacts %>%
   filter(DAL > SurvivalDAL)
 
 
-rm(BWContacts, NFWGAnalysis) # cleanup
+rm(BWContacts) # cleanup
 
 # Summary of contact information for tags with a NFWG record
 ContactsSummary <- StudyBWContacts %>%
@@ -202,6 +253,20 @@ StudyBWNFWGAnalysis <- StudyBWNFWGFirstRecord %>%
            first_date > as.Date("2016-01-01") & 
            location_id > 1042 & 
            location_id < 1049)
+TaggedBWTransferSummary <- StudyBWTransfers %>%
+  group_by(Backwater, TransferDate, TransferLocation) %>%
+  summarise(Count = n(),
+            UniquePIT = n_distinct(PITIndex))
+
+
+
+StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
+  group_by(location, CollectionYear, CollectionMonth, SizeClass) %>%
+  summarise(Captures = sum(Contacts), 
+            Uniques = n_distinct(PITIndex),
+            Recaptures = sum(if_else(FirstRecord == "no", 1, 0)),
+            Transfers = sum(Transfer)) %>%
+  ungroup()
 
 # Summarize all tagged fish
 BackwaterSummary <- StudyBWNFWGAnalysis %>%
