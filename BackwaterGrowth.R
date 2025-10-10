@@ -17,15 +17,15 @@ StudyBWRecaptures <- StudyBWNFWGAnalysis %>%
          RecapGrowthmm = RecapTL - total_length) %>%
   filter(RecapDAL > 365)
 
-StudyBWGrowthSummary <- StudyBWRecaptures %>%
+StudyBWGrowthSummary <- StudyBWGrowth %>%
   group_by(location, species) %>%
   summarise(Count = n(), 
-            Growthmin = as.integer(min(RecapGrowthmm)), 
-            Growthmean = as.integer(mean(RecapGrowthmm)), 
-            meanDAL = as.integer(mean(RecapDAL))) %>%
+            Growthmin = as.integer(min(Growth_mm_year)), 
+            Growthmean = as.integer(mean(Growth_mm_year)), 
+            meanYAL = round(mean(YAL), 3)) %>%
   ungroup()
 
-yoyHistogramDataIP <- StudyBWNFWGAnalysis %>%
+yoyHistogramDataIP <- StudyBWAnalysis %>%
   filter(event == "capture", !is.na(total_length), location_id != 592) %>%
   mutate(CaptureYear = year(first_date))
 

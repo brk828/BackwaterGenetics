@@ -11,17 +11,17 @@ packages(openxlsx) # package openxlsx is required to create to Excel files
 
 # If MaxScanDay is null, make it the release or tagging date of the fish
 # change juvenile to unknown sex to simplify sexes
-StudyBWNFWGAnalysis <- StudyBWNFWGAnalysis %>%
+StudyBWAnalysis <- StudyBWAnalysis %>%
   mutate(sex = if_else(sex == "J", "U", sex))
 
 # separate out the 3 study groups for analysis
-StudyBWXYTEIP <- StudyBWNFWGAnalysis %>% 
+StudyBWXYTEIP <- StudyBWAnalysis %>% 
   filter(location_id != 592, species == "XYTE", MaxDAL > SurvivalDAL)
 
-StudyBWGIELIP <- StudyBWNFWGAnalysis %>% 
+StudyBWGIELIP <- StudyBWAnalysis %>% 
   filter(location_id != 592, species == "GIEL", MaxDAL > SurvivalDAL)
 
-StudyBWYuma <- StudyBWNFWGAnalysis %>% 
+StudyBWYuma <- StudyBWAnalysis %>% 
   filter(location_id == 592, MaxDAL > SurvivalDAL)
 
 # Determine start date for each study group and create a dataframe 
@@ -201,10 +201,10 @@ save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvi
 
 FebYumaSurvivors <- KnownSurvivalYuma %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date), TagYear = year(first_date),
+  mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date)),
          location = "Yuma Cove backwater") %>% 
   arrange(Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
 
 FebYumaCounts <- FebYumaSurvivors %>%
   group_by(Species, location, Year) %>%
@@ -213,9 +213,9 @@ FebYumaCounts <- FebYumaSurvivors %>%
 
 FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date), TagYear = year(first_date)) %>% 
+  mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
   arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
 
 FebIPXYTECounts <- FebIPXYTESurvivors %>%
   group_by(Species, location, Year) %>%
@@ -224,9 +224,9 @@ FebIPXYTECounts <- FebIPXYTESurvivors %>%
   
 AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
   filter(month(Date) == 4, day(Date) == 15) %>%
-  mutate(Species = "GIEL", Year = year(Date), TagYear = year(first_date)) %>% 
+  mutate(Species = "GIEL", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
   arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL)
+  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
 
 AprIPGIELCounts <- AprIPGIELSurvivors %>%
   group_by(Species, location, Year) %>%
@@ -252,9 +252,9 @@ saveWorkbook(wb, paste0("output/BWSpawnSurvivors",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
 IPXYTESurvivorsHistogram <- ggplot(FebIPXYTESurvivors %>%
-                                     filter(Year >= 2021), 
-                                   aes(x = total_length, fill = factor(TagYear))) +
-  geom_histogram(binwidth = 10, position = "stack", color = "black") +
+                                     filter(Year >= 2021, !is.na(total_length)), 
+                                   aes(x = total_length, fill = TagYear)) +
+  geom_histogram(binwidth = 20, position = "stack", color = "black") +
   facet_wrap(~ location + Year, ncol = 5) +
   labs(
     x = "Total Length (mm)",
@@ -264,9 +264,9 @@ IPXYTESurvivorsHistogram <- ggplot(FebIPXYTESurvivors %>%
 IPXYTESurvivorsHistogram
 
 IPGIELSurvivorsHistogram <- ggplot(AprIPGIELSurvivors %>%
-                                     filter(Year >= 2021), 
-                                   aes(x = total_length, fill = factor(TagYear))) +
-  geom_histogram(position = "stack", color = "black") +
+                                     filter(Year >= 2021, !is.na(total_length)), 
+                                   aes(x = total_length, fill = TagYear)) +
+  geom_histogram(binwidth = 20, position = "stack", color = "black") +
   facet_wrap(~ location + Year, ncol = 4) +
   labs(
     x = "Total Length (mm)",

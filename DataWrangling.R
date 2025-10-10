@@ -66,6 +66,7 @@ StudyBWContacts <- StudyBWContactsdt[
 
 rm(StudyBWContactsdt)
 
+# All study backwater records for relevant time period
 StudyBWNFWG <- NFWGAnalysis %>%
   filter(collection_date > as.Date("2013-01-01") & 
            location_id == 592|
@@ -74,7 +75,7 @@ StudyBWNFWG <- NFWGAnalysis %>%
            location_id < 1049) %>%
   mutate(CollectionYear = year(collection_date),
          CollectionMonth = month(collection_date), 
-         SizeClass = ifelse(is.na(total_length), NA,
+         SizeClass = ifelse(is.na(total_length), 0,
                             ifelse(total_length >= SizeClass3, 3,
                                    ifelse(total_length >= SizeClass2, 2, 1)))) %>%
   arrange(PITIndex, collection_date) %>%
@@ -82,53 +83,124 @@ StudyBWNFWG <- NFWGAnalysis %>%
   mutate(FirstRecord = ifelse(row_number() > 1, "no", "yes")) %>%
   ungroup()
 
-  StudyBWCaptures <- StudyBWNFWG %>%
+# Study backwater captures used for growth and survival 
+StudyBWCaptures <- StudyBWNFWG %>%
     filter(event == "capture")
-  
-  StudyBWTransfers <- NFWGAnalysis %>%
-    filter(event == "transfer", SurfaceConnection == "open") %>%
-    filter(collection_date > as.Date("2013-01-01") & 
-             last_rearing == "Yuma Cove backwater"|
-             collection_date > as.Date("2016-01-01") & 
-             grepl("^IPCA", last_rearing)) %>%
-    mutate(Backwater = last_rearing, TransferLocation = location,
-           TransferDate = collection_date,
-           TransferYear = year(collection_date),
-           TransferMonth = month(collection_date),
-           SizeClass = ifelse(is.na(total_length), NA,
-                              ifelse(total_length >= SizeClass3, 3,
-                                     ifelse(total_length >= SizeClass2, 2, 1))))
-  
-  
-  TaggeBWTransfers <- StudyBWTransfers %>%
-    select(PITIndex, Backwater, TransferDate, TransferLocation) %>%
-    inner_join(StudyBWCaptures, by = "PITIndex") %>%
-    group_by(Backwater, TransferLocation, TransferDate, PITIndex) %>%
-    summarise(Count = n()) %>%
-    ungroup() %>%
-    mutate(Transfer = 1)
-  
-  StudyBWCaptureUniques <- StudyBWCaptures %>%
-    arrange(location, CollectionYear, CollectionMonth, PITIndex, collection_date) %>%
-    group_by(location, CollectionYear, CollectionMonth, PITIndex) %>%
-    summarise(Contacts = n(), 
-              FirstRecord = max(FirstRecord),
-              SizeClass = max(SizeClass),
-              total_length = max(total_length)) %>%
-    ungroup() %>%
-    left_join(TaggeBWTransfers %>%
-                select(-Count), 
-              by = c("CollectionYear" = "TransferYear",
-                     "CollectionMonth" = "TransferMonth",
-                     "PITIndex" = "PITIndex")) %>%
-    mutate(Transfer = if_else(is.na(Transfer), 0, 1))
-  
-  
+
+# Fish transferred from study backwaters to mainstem will have 
+# transfer record as well. Some transfers will not have a capture
+# record if PIT tagged during transfer. Also include IP pond to pond
+# transfers
+StudyBWTransfers <- NFWGAnalysis %>%
+  filter(event == "transfer") %>%
+  filter(collection_date > as.Date("2013-01-01") & 
+           last_rearing == "Yuma Cove backwater"|
+           collection_date > as.Date("2016-01-01") & 
+           grepl("^IPCA", last_rearing)|
+           collection_date > as.Date("2016-01-01") & 
+           grepl("^IPCA", location)) %>%
+  mutate(Backwater = last_rearing, TransferLocation = location,
+         TransferDate = as.Date(collection_date),
+         TransferYear = year(collection_date),
+         TransferMonth = month(collection_date),
+         SizeClass = ifelse(is.na(total_length), 0,
+                            ifelse(total_length >= SizeClass3, 3,
+                                   ifelse(total_length >= SizeClass2, 2, 1))),
+         SizeClassText = case_when(
+                  SizeClass == 1 ~ "Size Class One",
+                  SizeClass == 2 ~ "Size Class Two",
+                  SizeClass == 3 ~ "Size Class Three",
+                  SizeClass == 0 ~ "No TL Provided"))
+
+# These fish have a capture retained record
+# which will include backwater to backwater transfers
+StudyBWRetained <- StudyBWCaptures %>%
+  filter(disposition == "retained")
+
+# Add retained data when available for transfer records for analysis of transferred fish
+# This data will not include fish harvested and not PIT tagged. Those most be acquired
+# from summary Excel tables.
+StudyBWTransfersAnalysis <- StudyBWTransfers %>%
+  select(location, PITIndex, Backwater, TransferDate, TransferLocation, TransferTL = total_length,
+         TransferWeight = weight, SizeClass, SizeClassText, species) %>%
+  left_join(StudyBWRetained %>%
+               group_by(PITIndex) %>%
+               slice_max(order_by = collection_date, n = 1, with_ties = FALSE) %>%
+               ungroup() %>%
+               select(PITIndex, CaptureDisposition = disposition, CaptureLocation = location, CaptureDate = collection_date, 
+                      CaptureTL = total_length, Captureweight = weight, TaggedAtCapture = pit1_new), 
+             by = "PITIndex") %>%
+  mutate(Transfer = 1, 
+         CaptureDate = as.Date(CaptureDate),
+         TransferYear = year(TransferDate), 
+         TransferMonth = month(TransferDate),
+         TransferDays = as.integer(TransferDate - CaptureDate),
+         TLDiff = as.integer(CaptureTL - TransferTL)) %>%
+  filter(TransferDays < 4|is.na(TransferDays)) # in case a fish is transferred more than once
+
+
+if(nrow(StudyBWTransfersAnalysis) != n_distinct(StudyBWTransfersAnalysis$PITIndex)) {
+  warning("Duplicates in Transfer analysis data frame.")
+}
+
+# Transfers without a capture will need to be manually added to BWCaptures data
+StudyBWTransfersNoCapture <- StudyBWTransfersAnalysis %>% 
+  filter(is.na(CaptureLocation)) %>%
+  mutate(Contacts = 1,
+         FirstRecord = "yes") %>%
+  select(Backwater, CollectionYear = TransferYear, CollectionMonth = TransferMonth,
+         PITIndex, Contacts, FirstRecord, SizeClass, total_length = TransferTL, 
+         Transfer, SizeClassText, species)
+
+# Ensure only one record per BW capture records before binding to Transfer records without capture
+# record for a complete tagged capture dataframe
+StudyBWCaptureUniques <- StudyBWCaptures %>%
+  arrange(location, CollectionYear, CollectionMonth, PITIndex, collection_date) %>%
+  group_by(Backwater = location, CollectionYear, CollectionMonth, PITIndex, species) %>%
+  summarise(Contacts = n(), 
+            FirstRecord = max(FirstRecord),
+            SizeClass = max(SizeClass),
+            total_length = max(total_length)) %>%
+  ungroup() %>%
+  left_join(StudyBWTransfersAnalysis %>%
+              select(TransferYear, TransferMonth, PITIndex, Transfer), 
+            by = c("CollectionYear" = "TransferYear",
+                   "CollectionMonth" = "TransferMonth",
+                   "PITIndex" = "PITIndex")) %>%
+  mutate(Transfer = if_else(is.na(Transfer), 0, 1),
+         SizeClassText = case_when(
+           SizeClass == 1 ~ "Size Class One",
+           SizeClass == 2 ~ "Size Class Two",
+           SizeClass == 3 ~ "Size Class Three",
+           SizeClass == 0 ~ "No TL Provided")) %>%
+  rbind(StudyBWTransfersNoCapture)
+
+# cleanup
+rm(StudyBWTransfersNoCapture, StudyBWTransfers, StudyBWRetained)
+
+TaggedBWTransferSummary <- StudyBWTransfersAnalysis %>%
+  group_by(species, Backwater, TransferDate, TransferLocation) %>%
+  summarise(Count = n(),
+            UniquePIT = n_distinct(PITIndex)) %>%
+  ungroup()
+
+StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
+  group_by(species, Backwater, CollectionYear, CollectionMonth, SizeClass, SizeClassText) %>%
+  summarise(Captures = sum(Contacts), 
+            Uniques = n_distinct(PITIndex),
+            Recaptures = sum(if_else(FirstRecord == "no", 1, 0)),
+            Transfers = sum(Transfer)) %>%
+  ungroup()
+
 # One pond to pond transfer 003C06F28D
 # No long issue as First record is per location
 StudyBWNFWGTaggingN <- StudyBWNFWG %>%
   filter(pit1_new == "yes", FirstRecord == "no")
 
+if(nrow(StudyBWNFWGTaggingN) > 0){
+  warning("NFWG data for study backwaters includes a new pit1 tag that is not the
+          first record. Please see StudyBWNFGTaggingN for more information")
+}
 # Any first record that doesn't have a pit1_new "yes" should have a tagging_date
 # prior to first record collection date. Except for pond to pond transfer if 
 # if tagging and capture transfer happened on same day.
@@ -198,7 +270,7 @@ ContactSummaryDuplicateLocations <- ContactsSummary %>%
 # Dataframe of first record fish in backwater adding contact data
 # Cannot rely on pit1_new alone as some fish were tagged in hatchery
 # Add summary contact data and calculate tagging DAL
-StudyBWNFWGFirstRecord <- StudyBWNFWG %>% 
+StudyBWAnalysis <- StudyBWNFWG %>% 
   filter(FirstRecord == "yes") %>%
   select(first_date = collection_date, location, disposition, event, fin_clip, primary_method,
          species, PITIndex, sex, total_length, location_id) %>%
@@ -215,15 +287,23 @@ StudyBWNFWGFirstRecord <- StudyBWNFWG %>%
                                  MaxScanDate > as.Date("2024-09-30"), 1, 0),
          MaxScanDate = if_else(is.na(MaxScanDate), first_date, MaxScanDate))
 
+StudyBWGrowth <- StudyBWAnalysis %>%
+  inner_join(StudyBWCaptures %>%
+               filter(FirstRecord == "no", !is.na(total_length)) %>%
+               select(PITIndex, RecaptureDate = collection_date, RecaptureTL = total_length),
+             by = "PITIndex") %>%
+  select(location, PITIndex, FirstDate = first_date, disposition, species, PITIndex, sex, FirstTL = total_length,
+         RecaptureDate, RecaptureTL) %>%
+  mutate(DAL = as.integer(RecaptureDate - FirstDate),
+         YAL = DAL/365,
+         DeltaTL = RecaptureTL - FirstTL,
+         Growth_mm_year = DeltaTL/YAL) %>%
+  filter(YAL >=1)
+
 # Look for Tags with an NFWG record but no tagging record
 ContactNoTagging <- ContactsSummary %>%
-  anti_join(StudyBWNFWGFirstRecord, by = "PITIndex") %>%
+  anti_join(StudyBWAnalysis, by = "PITIndex") %>%
   filter(ScanDAL > SurvivalDAL)
-
-# Fish holdovers scanned during study period but released prior
-StudyBWNFWGTaggingHoldover <- StudyBWNFWGFirstRecord %>%
-  filter(first_date < as.Date("2013-01-01"),
-         MaxScanDate > as.Date("2013-01-01"))
 
 # Create workbook for contacts with NO PITIndex
 wb <- createWorkbook() # creates object to hold workbook sheets
@@ -239,37 +319,12 @@ writeData(wb, "PondHoppers", ContactSummaryDuplicateLocations) # write dataframe
 addWorksheet(wb, "ScannedWithoutTagging") # add worksheet
 writeData(wb, "ScannedWithoutTagging", ContactNoTagging) # write dataframe
 
-addWorksheet(wb, "Holdovers") # add worksheet
-writeData(wb, "Holdovers", StudyBWNFWGTaggingHoldover) # write dataframe
-
-saveWorkbook(wb, paste0("output/BWIssues",
+saveWorkbook(wb, paste0("output/BackwaterIssues",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
 
-# filter out older tagging records
-StudyBWNFWGAnalysis <- StudyBWNFWGFirstRecord %>%
-  filter(first_date > as.Date("2013-01-01") & 
-           location_id == 592|
-           first_date > as.Date("2016-01-01") & 
-           location_id > 1042 & 
-           location_id < 1049)
-TaggedBWTransferSummary <- StudyBWTransfers %>%
-  group_by(Backwater, TransferDate, TransferLocation) %>%
-  summarise(Count = n(),
-            UniquePIT = n_distinct(PITIndex))
-
-
-
-StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
-  group_by(location, CollectionYear, CollectionMonth, SizeClass) %>%
-  summarise(Captures = sum(Contacts), 
-            Uniques = n_distinct(PITIndex),
-            Recaptures = sum(if_else(FirstRecord == "no", 1, 0)),
-            Transfers = sum(Transfer)) %>%
-  ungroup()
-
-# Summarize all tagged fish
-BackwaterSummary <- StudyBWNFWGAnalysis %>%
+# Summarize all stocked fish
+BackwaterSummary <- StudyBWAnalysis %>%
   group_by(species, location, release_year, release_month, event) %>%
   summarise(count = n(), meanTL = as.integer(mean(total_length)), 
             minTL = min(total_length), maxTL = max(total_length),
@@ -285,8 +340,8 @@ StockingBackwaterSummary <- BackwaterSummary %>%
   filter(event == "stocking") 
 
 ScanningBackwaterSummary <- StudyBWContacts %>%
-  arrange(Location, ScanFY) %>%
-  group_by(Location, ScanFY) %>%
+  arrange(Species, Location, ScanFY) %>%
+  group_by(Species, Location, ScanFY) %>%
   summarise(Contacts = n(), Uniques = n_distinct(PITIndex)) %>%
   ungroup() 
 
@@ -295,13 +350,16 @@ wb <- createWorkbook() # creates object to hold workbook sheets
 addWorksheet(wb, "StockingBackwaterSummary") # add worksheet
 writeData(wb, "StockingBackwaterSummary", StockingBackwaterSummary) # write dataframe
 
+addWorksheet(wb, "TaggedBWTransferSummary") # add worksheet
+writeData(wb, "TaggedBWTransferSummary", TaggedBWTransferSummary) # write dataframe
+
 addWorksheet(wb, "ScanningBackwaterSummary") # add worksheet
 writeData(wb, "ScanningBackwaterSummary", ScanningBackwaterSummary) # write dataframe
 
-saveWorkbook(wb, paste0("output/StockingBackwaterSummary",
+saveWorkbook(wb, paste0("output/BackwaterSummary",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
-save(StudyBWNFWG, StudyBWNFWGAnalysis, StudyBWEffort, StudyBWContacts, SurvivalDAL, 
-     SizeClass2, SizeClass3, no_na, no_na_df, packages,
-     file = "data/ReportingData.RData")
+save(StudyBWNFWG, StudyBWAnalysis, StudyBWEffort, StudyBWContacts, SurvivalDAL, 
+     SizeClass2, SizeClass3, no_na, no_na_df, packages, StudyBWCaptureUniques, 
+     StudyBWTransfersAnalysis, StudyBWGrowth, file = "data/ReportingData.RData")
 
