@@ -81,11 +81,18 @@ StudyBWNFWG <- NFWGAnalysis %>%
   arrange(PITIndex, collection_date) %>%
   group_by(PITIndex, location) %>%
   mutate(FirstRecord = ifelse(row_number() > 1, "no", "yes")) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(SizeClassText = case_when(
+    SizeClass == 1 ~ "Size Class One",
+    SizeClass == 2 ~ "Size Class Two",
+    SizeClass == 3 ~ "Size Class Three",
+    SizeClass == 0 ~ "No TL Provided"))
 
 # Study backwater captures used for growth and survival 
 StudyBWCaptures <- StudyBWNFWG %>%
-    filter(event == "capture")
+    filter(event == "capture") %>%
+  mutate(Transfer = ifelse(disposition == "retained", 1, 0),
+         Mortality = ifelse(disposition == "recovered", 1, 0))
 
 # Fish transferred from study backwaters to mainstem will have 
 # transfer record as well. Some transfers will not have a capture
@@ -115,7 +122,7 @@ StudyBWTransfers <- NFWGAnalysis %>%
 # These fish have a capture retained record
 # which will include backwater to backwater transfers
 StudyBWRetained <- StudyBWCaptures %>%
-  filter(disposition == "retained")
+  filter(Transfer == 1)
 
 # Add retained data when available for transfer records for analysis of transferred fish
 # This data will not include fish harvested and not PIT tagged. Those most be acquired
@@ -131,6 +138,7 @@ StudyBWTransfersAnalysis <- StudyBWTransfers %>%
                       CaptureTL = total_length, Captureweight = weight, TaggedAtCapture = pit1_new), 
              by = "PITIndex") %>%
   mutate(Transfer = 1, 
+         Mortality = 0,
          CaptureDate = as.Date(CaptureDate),
          TransferYear = year(TransferDate), 
          TransferMonth = month(TransferDate),
@@ -147,10 +155,10 @@ if(nrow(StudyBWTransfersAnalysis) != n_distinct(StudyBWTransfersAnalysis$PITInde
 StudyBWTransfersNoCapture <- StudyBWTransfersAnalysis %>% 
   filter(is.na(CaptureLocation)) %>%
   mutate(Contacts = 1,
-         FirstRecord = "yes") %>%
+         FirstRecord = 1) %>%
   select(Backwater, CollectionYear = TransferYear, CollectionMonth = TransferMonth,
          PITIndex, Contacts, FirstRecord, SizeClass, total_length = TransferTL, 
-         Transfer, SizeClassText, species)
+         Transfer, Mortality, SizeClassText, species)
 
 # Ensure only one record per BW capture records before binding to Transfer records without capture
 # record for a complete tagged capture dataframe
@@ -158,9 +166,10 @@ StudyBWCaptureUniques <- StudyBWCaptures %>%
   arrange(location, CollectionYear, CollectionMonth, PITIndex, collection_date) %>%
   group_by(Backwater = location, CollectionYear, CollectionMonth, PITIndex, species) %>%
   summarise(Contacts = n(), 
-            FirstRecord = max(FirstRecord),
+            FirstRecord = max(ifelse(FirstRecord == "yes", 1, 0)),
             SizeClass = max(SizeClass),
-            total_length = max(total_length)) %>%
+            total_length = max(total_length),
+            Mortality = max(Mortality)) %>%
   ungroup() %>%
   left_join(StudyBWTransfersAnalysis %>%
               select(TransferYear, TransferMonth, PITIndex, Transfer), 
@@ -185,11 +194,12 @@ TaggedBWTransferSummary <- StudyBWTransfersAnalysis %>%
   ungroup()
 
 StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
-  group_by(species, Backwater, CollectionYear, CollectionMonth, SizeClass, SizeClassText) %>%
+  group_by(species, Backwater, CollectionYear, CollectionMonth) %>%
   summarise(Captures = sum(Contacts), 
             Uniques = n_distinct(PITIndex),
-            Recaptures = sum(if_else(FirstRecord == "no", 1, 0)),
-            Transfers = sum(Transfer)) %>%
+            NewlyTagged = sum(FirstRecord),
+            Transfers = sum(Transfer),
+            Mortalities = sum(Mortality)) %>%
   ungroup()
 
 # One pond to pond transfer 003C06F28D
