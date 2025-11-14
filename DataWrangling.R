@@ -367,7 +367,7 @@ TaggedBWTransferSummary <- StudyBWTransfersAnalysis %>%
 StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
   filter(Transfer == 0) %>%
   mutate(TaggedAtCapture = ifelse(FirstRecord == 1, "yes", "no")) %>%
-  group_by(species, Backwater, CaptureYear = CollectionYear, CaptureMonth = CollectionMonth, FirstRecord) %>%
+  group_by(species, Backwater, CaptureYear = CollectionYear, CaptureMonth = CollectionMonth, TaggedAtCapture) %>%
   summarise(UniqueFish = n_distinct(PITIndex),
             Mortalities = sum(Mortality),
             minTL = min(total_length),
