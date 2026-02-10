@@ -15,35 +15,12 @@ packages(readxl) # import Excel spreadsheets
 packages(data.table) # faster at indexing than grouping in dplyr
 packages(openxlsx) # package openxlsx is required to create to Excel files
 
-# Load BWScanning data workspace or downlod and load if more than 7 days old
-if(file.exists("data/BWScanningIndex.RData")){
-  data_info <- file.info("data/BWScanningIndex.RData")
-  data_date <- as.Date(data_info$mtime)
-  if(data_date>Sys.Date() - 7){
-    load("data/BWScanningIndex.RData")
-  } else {
-    download_backwater("data")
-    load("data/BWScanningIndex.RData")
-  }
-} else {
-  download_backwater("data")
-  load("data/BWScanningIndex.RData")
-}
+# Download and load workspaces
+download_backwater("data")
+load("data/BWScanningIndex.RData")
 
-# Load NFWG data workspace or downlod and load if more than 7 days old
-if(file.exists("data/NFWGAnalysis.RData")){
-  data_info <- file.info("data/NFWGAnalysis.RData")
-  data_date <- as.Date(data_info$mtime)
-  if(data_date>Sys.Date() - 7){
-    load("data/NFWGAnalysis.RData")
-  } else {
-    download_nfwg("data")
-    load("data/NFWGAnalysis.RData")
-  }
-} else {
-  download_nfwg("data")
-  load("data/NFWGAnalysis.RData")
-}
+download_nfwg("data")
+load("data/NFWGAnalysis.RData")
 
 rm(split_hourly, download_nfwg, download_genetics, download_PITindex, download_basin, download_backwater, euclid)
   
@@ -139,7 +116,7 @@ StudyBWRetained <- StudyBWCaptures %>%
   filter(Transfer == 1)
 
 # Add retained data when available for transfer records for analysis of transferred fish
-# This data will not include fish harvested and not PIT tagged. Those most be acquired
+# This data will not include fish harvested and not PIT tagged. Those must be acquired
 # from summary Excel tables.
 StudyBWTransfersAnalysis <- StudyBWTransfers %>%
   select(location, PITIndex, Backwater, TransferDate, TransferLocation, TransferTL = total_length,
