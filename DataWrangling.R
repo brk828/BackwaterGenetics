@@ -92,12 +92,12 @@ StudyBWCaptures <- StudyBWNFWG %>%
 StudyBWTransfers <- NFWGAnalysis %>%
   filter(event == "transfer") %>%
   filter(collection_date > as.Date("2013-01-01") & 
-           last_rearing == "Yuma Cove backwater"|
+           transfer_from == "Yuma Cove backwater"|
            collection_date > as.Date("2016-01-01") & 
-           grepl("^IPCA", last_rearing)|
+           grepl("^IPCA", transfer_from)|
            collection_date > as.Date("2016-01-01") & 
            grepl("^IPCA", location)) %>%
-  mutate(Backwater = last_rearing, TransferLocation = location,
+  mutate(Backwater = transfer_from, TransferLocation = location,
          TransferDate = as.Date(collection_date),
          TransferYear = year(collection_date),
          TransferMonth = month(collection_date),
