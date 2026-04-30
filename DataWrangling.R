@@ -319,11 +319,13 @@ BackwaterSurvivalSummary <- StudyBWAnalysis %>% # remove transferred fish from s
   group_by(species, location, release_year, release_month, event) %>%
   summarise(count = n(), transferred = sum(Transfer), meanTL = as.integer(mean(total_length)), 
             minTL = min(total_length), maxTL = max(total_length),
-            survivedDAL = sum(Survived), survivedFY24 = sum(SurvivedFY24),
+            survivedDAL = sum(Survived), 
+            survivedFY24 = sum(SurvivedFY24),
             survivedFY25 = sum(SurvivedFY25)) %>%
   ungroup() %>%
   mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3),
-         PorpSurvivedFY24 = round(as.numeric(survivedFY24/(count-transferred)), 3)) %>%
+         PorpSurvivedFY24 = round(as.numeric(survivedFY24/(count-transferred)), 3),
+         PorpSurvivedFY25 = round(as.numeric(survivedFY25/(count-transferred)), 3)) %>%
   arrange(location, release_year, release_month) %>%
   filter(release_year < year(Sys.Date()))
 
