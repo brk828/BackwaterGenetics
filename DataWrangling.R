@@ -92,12 +92,12 @@ StudyBWCaptures <- StudyBWNFWG %>%
 StudyBWTransfers <- NFWGAnalysis %>%
   filter(event == "transfer") %>%
   filter(collection_date > as.Date("2013-01-01") & 
-           last_rearing == "Yuma Cove backwater"|
+           transfer_from == "Yuma Cove backwater"|
            collection_date > as.Date("2016-01-01") & 
-           grepl("^IPCA", last_rearing)|
+           grepl("^IPCA", transfer_from)|
            collection_date > as.Date("2016-01-01") & 
            grepl("^IPCA", location)) %>%
-  mutate(Backwater = last_rearing, TransferLocation = location,
+  mutate(Backwater = transfer_from, TransferLocation = location,
          TransferDate = as.Date(collection_date),
          TransferYear = year(collection_date),
          TransferMonth = month(collection_date),
@@ -272,6 +272,8 @@ StudyBWAnalysis <- StudyBWNFWG %>%
   mutate(Survived = ifelse(MaxDAL > SurvivalDAL, 1, 0),
          SurvivedFY24 = ifelse(!is.na(MaxScanDate) & 
                                  MaxScanDate > as.Date("2024-09-30"), 1, 0),
+         SurvivedFY25 = ifelse(!is.na(MaxScanDate) & 
+                                 MaxScanDate > as.Date("2025-09-30"), 1, 0),
          MaxScanDate = if_else(is.na(MaxScanDate), first_date, MaxScanDate)) %>%
   left_join(StudyBWTransfersAnalysis %>% select(PITIndex, Transfer), by = "PITIndex") %>%
   mutate(Transfer = ifelse(is.na(Transfer), 0, 1))
@@ -317,12 +319,15 @@ BackwaterSurvivalSummary <- StudyBWAnalysis %>% # remove transferred fish from s
   group_by(species, location, release_year, release_month, event) %>%
   summarise(count = n(), transferred = sum(Transfer), meanTL = as.integer(mean(total_length)), 
             minTL = min(total_length), maxTL = max(total_length),
-            survivedDAL = sum(Survived), survivedFY24 = sum(SurvivedFY24)) %>%
+            survivedDAL = sum(Survived), 
+            survivedFY24 = sum(SurvivedFY24),
+            survivedFY25 = sum(SurvivedFY25)) %>%
   ungroup() %>%
   mutate(PropSurvivedDAL = round(as.numeric(survivedDAL/count), 3),
-         PorpSurvivedFY24 = round(as.numeric(survivedFY24/(count-transferred)), 3)) %>%
+         PorpSurvivedFY24 = round(as.numeric(survivedFY24/(count-transferred)), 3),
+         PorpSurvivedFY25 = round(as.numeric(survivedFY25/(count-transferred)), 3)) %>%
   arrange(location, release_year, release_month) %>%
-  filter(release_year < year(Sys.Date())-1)
+  filter(release_year < year(Sys.Date()))
 
 # Summary for stockings only
 StockingBackwaterSummary <- BackwaterSurvivalSummary %>%
