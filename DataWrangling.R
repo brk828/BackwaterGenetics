@@ -72,7 +72,7 @@ StudyBWHoldovers <- NFWGAnalysis %>%
            collection_date < as.Date("2016-01-01") & 
            location_id > 1042 & 
            location_id < 1049) %>%
-  inner_join(StudyBWContacts %>% 
+  inner_join(StudyBWContacts %>% select(PITIndex, LID, Date, ScanHr, ScanMonth, count) %>%
                filter(Date > as.Date("2013-01-01") & 
                         LID == 592|
                         Date > as.Date("2016-01-01") & 
@@ -156,7 +156,7 @@ StudyBWTransfersNoCapture <- StudyBWTransfersAnalysis %>%
 # record for a complete tagged capture dataframe
 StudyBWCaptureUniques <- StudyBWCaptures %>%
   arrange(location, CollectionYear, CollectionMonth, PITIndex, collection_date) %>%
-  group_by(Backwater = location, CollectionYear, CollectionMonth, PITIndex, species) %>%
+  group_by(Backwater, CollectionYear, CollectionMonth, PITIndex, species) %>%
   summarise(Contacts = n(), 
             FirstRecord = max(ifelse(FirstRecord == "yes", 1, 0)),
             SizeClass = max(SizeClass),
@@ -180,7 +180,7 @@ StudyBWCaptureUniques <- StudyBWCaptures %>%
 rm(StudyBWTransfersNoCapture, StudyBWTransfers, StudyBWRetained)
 
 # One pond to pond transfer 003C06F28D
-# No long issue as First record is per location
+# No long issue as First record is per backwater
 StudyBWNFWGTaggingN <- StudyBWNFWG %>%
   filter(pit1_new == "yes", FirstRecord == "no")
 
@@ -241,18 +241,23 @@ ContactSummaryDuplicateLocations <- ContactsSummary %>%
   group_by(PITIndex) %>%
   summarise(count = n(), FirstLocation = min(Backwater), SecondLocation = max(Backwater)) %>%
   ungroup() %>%
-  filter(count > 1) %>%
-  left_join(StudyBWContacts %>%
-              select(PITIndex, FirstEID = EID, Backwater, FirstDate = Date), 
-            by = c("PITIndex", "FirstLocation" = "Backwater")) %>%
-  group_by(PITIndex, FirstLocation, SecondLocation) %>%
-  summarise(FirstContacts = n(), FirstDate = min(FirstDate), FirstEID = min(FirstEID)) %>%
-  ungroup() %>%
-  left_join(StudyBWContacts %>% select(PITIndex, SecondEID = EID, Backwater, SecondDate = Date), 
-            by = c("PITIndex", "SecondLocation" = "Backwater")) %>%
-  group_by(PITIndex, FirstLocation, SecondLocation, FirstEID, FirstContacts, FirstDate) %>%
-  summarise(SecondContacts = n(), SecondDate = min(SecondDate), SecondEID = min(SecondEID)) %>%
-  ungroup()
+  filter(count > 1)
+
+if(nrow(ContactSummaryDuplicateLocations) > 0) {
+  ContactSummaryDuplicateLocations <- ContactSummaryDuplicateLocations %>%
+    left_join(StudyBWContacts %>%
+                select(PITIndex, FirstEID = EID, Backwater, FirstDate = Date), 
+              by = c("PITIndex", "FirstLocation" = "Backwater")) %>%
+    group_by(PITIndex, FirstLocation, SecondLocation) %>%
+    summarise(FirstContacts = n(), FirstDate = min(FirstDate), FirstEID = min(FirstEID)) %>%
+    ungroup() %>%
+    left_join(StudyBWContacts %>% select(PITIndex, SecondEID = EID, Backwater, SecondDate = Date), 
+              by = c("PITIndex", "SecondLocation" = "Backwater")) %>%
+    group_by(PITIndex, FirstLocation, SecondLocation, FirstEID, FirstContacts, FirstDate) %>%
+    summarise(SecondContacts = n(), SecondDate = min(SecondDate), SecondEID = min(SecondEID)) %>%
+    ungroup()
+} else{rm(ContactSummaryDuplicateLocations)}
+
 
 # Dataframe of first record fish in backwater adding contact data
 # Cannot rely on pit1_new alone as some fish were tagged in hatchery
@@ -357,8 +362,8 @@ StudyBWCaptureSummary <- StudyBWCaptureUniques %>%
   ungroup() 
 
 ScanningBackwaterSummary <- StudyBWContacts %>%
-  arrange(Species, Location, ScanFY) %>%
-  group_by(Species, Location, ScanFY) %>%
+  arrange(Species, Backwater, ScanFY) %>%
+  group_by(Species, Backwater, ScanFY) %>%
   summarise(Contacts = n(), Uniques = n_distinct(PITIndex)) %>%
   ungroup() 
 
