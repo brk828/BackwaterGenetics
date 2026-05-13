@@ -280,3 +280,4 @@ AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
   group_by(location, Year, TagYear, TLCM) %>%
   summarise(Count = n()) %>%
   ungroup()
+

@@ -280,7 +280,7 @@ StudyBWAnalysis <- StudyBWNFWG %>%
          SurvivedFY25 = ifelse(!is.na(MaxScanDate) & 
                                  MaxScanDate > as.Date("2025-09-30"), 1, 0),
          MaxScanDate = if_else(is.na(MaxScanDate), first_date, MaxScanDate)) %>%
-  left_join(StudyBWTransfersAnalysis %>% select(PITIndex, Transfer), by = "PITIndex") %>%
+  left_join(StudyBWTransfersAnalysis %>% select(PITIndex, Transfer, TransferDate), by = "PITIndex") %>%
   mutate(Transfer = ifelse(is.na(Transfer), 0, 1))
 
 StudyBWGrowth <- StudyBWAnalysis %>%
