@@ -197,87 +197,9 @@ png(paste0("output/KnownSurvivalPlotIPGIEL.png"), width = 8, height = 5, units =
 KnownSurvivalPlotIPGIEL
 dev.off()
 
-save(TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, file = "data/KnownSurvivalCounts.RData")
+save(KnownSurvivalYuma, KnownSurvivalIPXYTE, KnownSurvivalIPGIEL,
+     TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, packages, 
+     file = "data/KnownSurvivalCounts.RData")
 
-FebYumaSurvivors <- KnownSurvivalYuma %>%
-  filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date)),
-         location = "Yuma Cove backwater") %>% 
-  arrange(Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
 
-FebYumaCounts <- FebYumaSurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
-
-FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
-  filter(month(Date) == 2, day(Date) == 15) %>%
-  mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
-  arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
-
-FebIPXYTECounts <- FebIPXYTESurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
-  
-AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
-  filter(month(Date) == 4, day(Date) == 15) %>%
-  mutate(Species = "GIEL", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
-  arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
-
-AprIPGIELCounts <- AprIPGIELSurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
-
-SpawnCounts <- rbind(FebYumaCounts, FebIPXYTECounts, AprIPGIELCounts)
-# Create workbook for contacts with NO PITIndex
-wb <- createWorkbook() # creates object to hold workbook sheets
-addWorksheet(wb, "YumaFebSurvivors") # add worksheet
-writeData(wb, "YumaFebSurvivors", FebYumaSurvivors) # write dataframe
-
-addWorksheet(wb, "IPXYTEFebSurvivors") # add worksheet
-writeData(wb, "IPXYTEFebSurvivors", FebIPXYTESurvivors) # write dataframe
-
-addWorksheet(wb, "IPGIELAprSurvivors") # add worksheet
-writeData(wb, "IPGIELAprSurvivors", AprIPGIELSurvivors) # write dataframe
-
-addWorksheet(wb, "SpawnCounts") # add worksheet
-writeData(wb, "SpawnCounts", SpawnCounts) # write dataframe
-
-saveWorkbook(wb, paste0("output/BWSpawnSurvivors",
-                        format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
-
-IPXYTESurvivorsHistogram <- ggplot(FebIPXYTESurvivors %>%
-                                     filter(Year >= 2021, !is.na(total_length)), 
-                                   aes(x = total_length, fill = TagYear)) +
-  geom_histogram(binwidth = 20, position = "stack", color = "black") +
-  facet_wrap(~ location + Year, ncol = 5) +
-  labs(
-    x = "Total Length (mm)",
-    y = "Count") +
-  theme_minimal()
-
-IPXYTESurvivorsHistogram
-
-IPGIELSurvivorsHistogram <- ggplot(AprIPGIELSurvivors %>%
-                                     filter(Year >= 2021, !is.na(total_length)), 
-                                   aes(x = total_length, fill = TagYear)) +
-  geom_histogram(binwidth = 20, position = "stack", color = "black") +
-  facet_wrap(~ location + Year, ncol = 4) +
-  labs(
-    x = "Total Length (mm)",
-    y = "Count") +
-  theme_minimal()
-
-IPGIELSurvivorsHistogram
-
-AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
-  mutate(TLCM = as.integer(total_length*.10)) %>%
-  group_by(location, Year, TagYear, TLCM) %>%
-  summarise(Count = n()) %>%
-  ungroup()
 
