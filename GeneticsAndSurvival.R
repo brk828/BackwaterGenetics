@@ -12,23 +12,36 @@ packages(readxl) # import Excel spreadsheets
 packages(data.table) # faster at indexing than grouping in dplyr
 packages(openxlsx) # package openxlsx is required to create to Excel files
 packages(tidyr) # needed for some pivot functions
+packages(stringr) # string queries
+packages(ggplot2) # plotting
 
+# Pull stocking only records from Yuma (XYTE), IP for XYTE, and IP for GIEL. Avoiding any
+# stockings after 2024
 YumaStockings <- StudyBWAnalysis %>% filter(event == "stocking",
                                             location_id == 592,
                                             release_year < 2025) %>%
   select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
-         StockingSex = sex, StockingTL = total_length, Survived, MaxDAL, )
+         StockingSex = sex, StockingTL = total_length, Survived, MaxDAL)
 
-IP1Stockings <- StudyBWAnalysis %>% filter(event == "stocking",
-                                        location_id == 1043,
-                                        release_year == 2016) %>%
-  select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
-         StockingSex = sex, StockingTL = total_length, Survived, MaxDAL, )
+IPXYTEStockings <- StudyBWAnalysis %>% filter(event == "stocking",
+                                              species == "XYTE",
+                                              str_starts(location, "IPCA"),
+                                              release_year < 2025) %>%
+  select(Pond = location, Species = species, PITIndex, StockingYear = release_year, 
+         StockingMonth = release_month,StockingSex = sex, StockingTL = total_length, Survived, MaxDAL)
+
+IPGIELStockings <- StudyBWAnalysis %>% filter(event == "stocking",
+                                              str_starts(location, "IPCA"),
+                                              species == "GIEL",
+                                              release_year < 2025) %>%
+  select(Pond = location, Species = species, PITIndex, StockingYear = release_year, 
+         StockingMonth = release_month,StockingSex = sex, StockingTL = total_length, Survived, MaxDAL)
 
 rm(StudyBWGrowth, StudyBWEffort, StudyBWCaptureUniques, StudyBWTransfersAnalysis)
 
 # Bring in larval and recruit counts by PIT tag from Dowling data for Yuma and IP1 stored as csv files in
-# data directory
+# data directory Combine larvae and recruits per backwater and create a single dataframe for all sexes
+# and all reproductive output
 YumaLarvalMoms <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_larvae_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
   mutate(GSex = "F", PIT = toupper(PIT))
@@ -97,18 +110,24 @@ IPOffspring <- full_join(IPLarvalParents, IPRecruitParents, by = c("Year", "PIT"
 
 rm(IPLarvalMoms, IPLarvalDads, IPRecruitsMoms, IPRecruitsDads, IPLarvalParents)  
 
+# Check for any genetic results that aren't in the stocking dataframes
 YumaOffspringNoStocking <- YumaOffspring %>% 
   anti_join(YumaStockings, by = c("PIT" = "PITIndex"))
 
 IPOffspringNoStocking <- IPOffspring %>% 
-  anti_join(IP1Stockings %>% filter(), by = c("PIT" = "PITIndex"))
+  anti_join(IPXYTEStockings %>% filter(), by = c("PIT" = "PITIndex"))
 
-
+# if there are any genetic results without stocking data, stop process
 if(sum(nrow(YumaOffspringNoStocking) + nrow(IPOffspringNoStocking)) > 0){
   stop("You have genetic data that doesn't match stocking records, please review the 
        NoStocking dataframes for details.")
 }else{rm(YumaOffspringNoStocking, IPOffspringNoStocking)}
 
+# Start with Known survivors dataframe, look for fish that were known to be alive 
+# as of February 15 each year. These fish are considered "available" for reproduction
+# except for stocking year, which we consider all stocked fish to be available. 
+# Create a dataframe with stocking information and known survivors for each year for
+# all stocked fish, then add offspring data to this dataframe. 
 FebYumaSurvivors <- KnownSurvivalYuma %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
   mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date)),
@@ -127,7 +146,49 @@ FebYumaSurvivors <- KnownSurvivalYuma %>%
          Larvae = no_na_df(Larvae)) %>%
   mutate(Offspring = Recruits + Larvae)
 
+# Same process for all XYTE ponds at IP. Only Pond 1 currently has offspring data
+# but future proofed to include all ponds and all stocking years.
+FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
+  filter(month(Date) == 2, day(Date) == 1) %>%
+  mutate(Species = "XYTE", Year = year(Date), 
+         Pond = location,
+         TagYear = as.factor(year(first_date))) %>% 
+  arrange(Pond, PITIndex, Year) %>%
+  select(Pond, Species, PITIndex, Year, TagYear) %>% 
+  filter(Year != TagYear) %>%
+  select(-TagYear) %>%
+  left_join(IPXYTEStockings, by = c("PITIndex","Pond", "Species")) %>%
+  filter(!is.na(StockingYear)) %>%
+  rbind(IPXYTEStockings %>% mutate(Year = StockingYear)) %>%
+  left_join(IPOffspring %>%
+              select(-GSex)
+            , by = c("PITIndex" = "PIT", "Year")) %>%
+  mutate(Recruits = no_na_df(Recruits),
+         Larvae = no_na_df(Larvae)) %>%
+  mutate(Offspring = Recruits + Larvae)
 
+# Same process for all GIEL at IP. No offspring data currently, but can be added later
+AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
+  filter(month(Date) == 4, day(Date) == 15) %>%
+  mutate(Species = "GIEL", Year = year(Date), 
+         Pond = location,
+         TagYear = as.factor(year(first_date))) %>% 
+  arrange(Pond, PITIndex, Year) %>%
+  select(Pond, Species, PITIndex, Year, TagYear) %>% 
+  filter(Year != TagYear) %>%
+  select(-TagYear) %>%
+  left_join(IPGIELStockings, by = c("PITIndex","Pond", "Species")) %>%
+  filter(!is.na(StockingYear)) %>%
+  rbind(IPGIELStockings %>% mutate(Year = StockingYear)) %>%
+  left_join(IPOffspring %>%
+              select(-GSex)
+            , by = c("PITIndex" = "PIT", "Year")) %>%
+  mutate(Recruits = no_na_df(Recruits),
+         Larvae = no_na_df(Larvae)) %>%
+  mutate(Offspring = Recruits + Larvae)
+
+# Reduce data to counts for survivors, fish that produced larvae, recruits, or either
+# Calculate proportion of known population that produced offspring
 FebYumaCounts <- FebYumaSurvivors %>%
   group_by(Species, StockingSex, StockingYear, Year) %>%
   summarise(Count = n(),
@@ -137,87 +198,67 @@ FebYumaCounts <- FebYumaSurvivors %>%
   ungroup() %>%
   mutate(PropOffspring = round(Offspring/Count, 3))
 
-FebIP1Survivors <- KnownSurvivalIPXYTE %>%
-  filter(month(Date) == 2, day(Date) == 15, location == "IPCA (Pond 1)") %>%
-  mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
-  arrange(Year, PITIndex) %>%
-  select(PITIndex, Year, TagYear) %>% 
-  filter(Year != TagYear) %>%
-  select(-TagYear) %>%
-  left_join(IP1Stockings, by = "PITIndex") %>%
-  filter(!is.na(StockingYear)) %>%
-  rbind(IP1Stockings %>% mutate(Year = StockingYear)) %>%
-  left_join(IPOffspring %>%
-              select(-GSex)
-            , by = c("PITIndex" = "PIT", "Year")) %>%
-  mutate(Recruits = no_na_df(Recruits),
-         Larvae = no_na_df(Larvae)) %>%
-  mutate(Offspring = Recruits + Larvae)
-
-FebIP1Counts <- FebIP1Survivors %>%
-  group_by(Species, StockingSex, StockingYear, Year) %>%
+FebIPXYTECounts <- FebIPXYTESurvivors %>%
+  group_by(Pond, StockingSex, StockingYear, Year) %>%
   summarise(Count = n(),
-            LarvaePos = sum(Larvae > 0),
-            RecruitsPos = sum(Recruits > 0),
+            Larvae = sum(Larvae > 0),
+            Recruits = sum(Recruits > 0),
             Offspring = sum(Offspring > 0)) %>%
   ungroup() %>%
   mutate(PropOffspring = round(Offspring/Count, 3))
 
-AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
-  filter(month(Date) == 4, day(Date) == 15) %>%
-  mutate(Species = "GIEL", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
-  arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
 
 AprIPGIELCounts <- AprIPGIELSurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
+  group_by(Pond, StockingSex, StockingYear, Year) %>%
+  summarise(Count = n(),
+            Larvae = sum(Larvae > 0),
+            Recruits = sum(Recruits > 0),
+            Offspring = sum(Offspring > 0)) %>%
+  ungroup() %>%
+  mutate(PropOffspring = round(Offspring/Count, 3))
 
-SpawnCounts <- rbind(FebYumaCounts, FebIPXYTECounts, AprIPGIELCounts)
 # Create workbook for contacts with NO PITIndex
 wb <- createWorkbook() # creates object to hold workbook sheets
-addWorksheet(wb, "YumaFebSurvivors") # add worksheet
-writeData(wb, "YumaFebSurvivors", FebYumaSurvivors) # write dataframe
+addWorksheet(wb, "FebYumaCounts") # add worksheet
+writeData(wb, "FebYumaCounts", FebYumaCounts) # write dataframe
 
-addWorksheet(wb, "IPXYTEFebSurvivors") # add worksheet
-writeData(wb, "IPXYTEFebSurvivors", FebIPXYTESurvivors) # write dataframe
+addWorksheet(wb, "FebIPXYTECounts") # add worksheet
+writeData(wb, "FebIPXYTECounts", FebIPXYTECounts) # write dataframe
 
-addWorksheet(wb, "IPGIELAprSurvivors") # add worksheet
-writeData(wb, "IPGIELAprSurvivors", AprIPGIELSurvivors) # write dataframe
-
-addWorksheet(wb, "SpawnCounts") # add worksheet
-writeData(wb, "SpawnCounts", SpawnCounts) # write dataframe
+addWorksheet(wb, "AprIPGIELCounts") # add worksheet
+writeData(wb, "AprIPGIELCounts", AprIPGIELCounts) # write dataframe
 
 saveWorkbook(wb, paste0("output/BWSpawnSurvivors",
                         format(Sys.time(), "%Y%m%d"), ".xlsx"), overwrite = TRUE)
 
 IPXYTESurvivorsHistogram <- ggplot(FebIPXYTESurvivors %>%
-                                     filter(Year >= 2021, !is.na(total_length)), 
-                                   aes(x = total_length, fill = TagYear)) +
+                                     filter(Year >= 2021, !is.na(StockingTL)), 
+                                   aes(x = StockingTL, fill = as.factor(StockingYear))) +
   geom_histogram(binwidth = 20, position = "stack", color = "black") +
-  facet_wrap(~ location + Year, ncol = 5) +
+  facet_wrap(~ Pond + Year, ncol = 5) +
   labs(
-    x = "Total Length (mm)",
-    y = "Count") +
+    x = "Stocking Total Length (mm)",
+    y = "Count",
+    fill = "Stocking Year") +
   theme_minimal()
 
 IPXYTESurvivorsHistogram
 
 IPGIELSurvivorsHistogram <- ggplot(AprIPGIELSurvivors %>%
-                                     filter(Year >= 2021, !is.na(total_length)), 
-                                   aes(x = total_length, fill = TagYear)) +
+                                     filter(Year < 2021, !is.na(StockingTL)), 
+                                   aes(x = StockingTL, fill = as.factor(StockingYear))) +
   geom_histogram(binwidth = 20, position = "stack", color = "black") +
-  facet_wrap(~ location + Year, ncol = 4) +
+  facet_wrap(~ Pond + Year, ncol = 4) +
   labs(
-    x = "Total Length (mm)",
-    y = "Count") +
+    x = "Stocking Total Length (mm)",
+    y = "Count",
+    fill = "Stocking Year") +
   theme_minimal()
 
 IPGIELSurvivorsHistogram
 
 AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
-  mutate(TLCM = as.integer(total_length*.10)) %>%
-  group_by(location, Year, TagYear, TLCM) %>%
+  mutate(TLCM = as.integer(StockingTL*.10)) %>%
+  group_by(Pond, Year, StockingYear, TLCM) %>%
   summarise(Count = n()) %>%
   ungroup()
