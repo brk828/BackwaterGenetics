@@ -6,85 +6,136 @@
 load("data/KnownSurvivalCounts.RData")
 load("data/ReportingData.RData")
 
-YumaStockings <- StudyBWAnalysis %>% filter(event == "stocking",
-                                            location_id == 592,
-                                            (release_year == 2013|
-                                               release_year == 2015))
-
-IPStockings <- StudyBWAnalysis %>% filter(event == "stocking",
-                                          location_id == 1043,
-                                          release_year == 2016)
-
-rm(StudyBWGrowth, StudyBWEffort, StudyBWCaptureUniques, StudyBWTransfersAnalysis)
-
 packages(dplyr)     # data manipulation
 packages(lubridate) # date and time manipulation
-packages(ggplot2) # Plotting
-packages(tidyr) # replace_na for dataframes function plus others
+packages(readxl) # import Excel spreadsheets
+packages(data.table) # faster at indexing than grouping in dplyr
 packages(openxlsx) # package openxlsx is required to create to Excel files
+packages(tidyr) # needed for some pivot functions
 
+YumaStockings <- StudyBWAnalysis %>% filter(event == "stocking",
+                                            location_id == 592,
+                                            release_year < 2025) %>%
+  select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
+         StockingSex = sex, StockingTL = total_length, Survived, MaxDAL, )
+
+IPStockings <- StudyBWAnalysis %>% filter(event == "stocking",
+                                        location_id == 1043,
+                                        release_year == 2016) %>%
+  select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
+         StockingSex = sex, StockingTL = total_length, Survived, MaxDAL, )
+
+rm(StudyBWGrowth, StudyBWEffort, StudyBWCaptureUniques, StudyBWTransfersAnalysis)
 
 # Bring in larval and recruit counts by PIT tag from Dowling data for Yuma and IP1 stored as csv files in
 # data directory
 YumaLarvalMoms <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_larvae_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
-  mutate(GSex = "F")
+  mutate(GSex = "F", PIT = toupper(PIT))
 
 YumaLarvalDads <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_larvae_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
-  mutate(GSex = "M")
+  mutate(GSex = "M", PIT = toupper(PIT))
 
 YumaRecruitsMoms <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_recruits_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
-  mutate(GSex = "F")
+  mutate(GSex = "F", PIT = toupper(PIT))
 
 YumaRecruitsDads <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_recruits_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
-  mutate(GSex = "M")
+  mutate(GSex = "M", PIT = toupper(PIT))
 
 YumaRecruitParents <- rbind(YumaRecruitsMoms, YumaRecruitsDads)
 
 YumaLarvalParents <- rbind(YumaLarvalMoms, YumaLarvalDads) 
 
-rm(YumaLarvalMoms, YumaLarvalDads, YumaRecruitsMoms, YumaRecruitsDads)  
+YumaOffspring <- full_join(YumaLarvalParents, YumaRecruitParents, by = c("Year", "PIT"), suffix = c("_Recruits", "_Larvae")) %>%
+  mutate(
+    Recruits = no_na_df(Recruits),
+    Larvae   = no_na_df(Larvae)
+  ) %>%
+  mutate( GSex = case_when(
+    is.na(GSex_Recruits) ~ GSex_Larvae,
+    is.na(GSex_Larvae) ~ GSex_Recruits,
+    GSex_Recruits == GSex_Larvae ~ GSex_Recruits,
+    TRUE ~ "U")) %>% 
+  select(-GSex_Recruits, -GSex_Larvae)
+
+rm(YumaLarvalMoms, YumaLarvalDads, YumaRecruitsMoms, YumaRecruitsDads, YumaLarvalParents)  
 
 IPLarvalMoms <- read.csv("C:/GIT/BackwaterGenetics/data/IP_larvae_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
-  mutate(GSex = "F")
+  mutate(GSex = "F", PIT = toupper(PIT))
 
 IPLarvalDads <- read.csv("C:/GIT/BackwaterGenetics/data/IP_larvae_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
-  mutate(GSex = "M")
+  mutate(GSex = "M", PIT = toupper(PIT))
 
 IPRecruitsMoms <- read.csv("C:/GIT/BackwaterGenetics/data/IP_recruits_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
-  mutate(GSex = "F")
+  mutate(GSex = "F", PIT = toupper(PIT))
 
 IPRecruitsDads <- read.csv("C:/GIT/BackwaterGenetics/data/IP_recruits_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
-  mutate(GSex = "M")
+  mutate(GSex = "M", PIT = toupper(PIT))
 
 IPRecruitParents <- rbind(IPRecruitsMoms, IPRecruitsDads)
 
 IPLarvalParents <- rbind(IPLarvalMoms, IPLarvalDads) 
 
-rm(IPLarvalMoms, IPLarvalDads, IPRecruitsMoms, IPRecruitsDads)  
+IPOffspring <- full_join(IPLarvalParents, IPRecruitParents, by = c("Year", "PIT"), suffix = c("_Recruits", "_Larvae")) %>%
+  mutate(
+    Recruits = no_na_df(Recruits),
+    Larvae   = no_na_df(Larvae)
+  ) %>%
+  mutate( GSex = case_when(
+    is.na(GSex_Recruits) ~ GSex_Larvae,
+    is.na(GSex_Larvae) ~ GSex_Recruits,
+    GSex_Recruits == GSex_Larvae ~ GSex_Recruits,
+    TRUE ~ "U")) %>% 
+  select(-GSex_Recruits, -GSex_Larvae)
 
+rm(IPLarvalMoms, IPLarvalDads, IPRecruitsMoms, IPRecruitsDads, IPLarvalParents)  
+
+YumaOffspringNoStocking <- YumaOffspring %>% 
+  anti_join(YumaStockings, by = c("PIT" = "PITIndex"))
+
+IPOffspringNoStocking <- IPOffspring %>% 
+  anti_join(IPStockings, by = c("PIT" = "PITIndex"))
+
+
+if(sum(nrow(YumaOffspringNoStocking) + nrow(IPOffspringNoStocking)) > 0){
+  stop("You have genetic data that doesn't match stocking records, please review the 
+       NoStocking dataframes for details.")
+}else{rm(YumaOffspringNoStocking, IPOffspringNoStocking)}
 
 FebYumaSurvivors <- KnownSurvivalYuma %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
   mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date)),
          location = "Yuma Cove backwater") %>% 
   arrange(Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
+  select(PITIndex, Year, TagYear) %>% 
+  filter(Year != TagYear) %>%
+  select(-TagYear) %>%
+  left_join(YumaStockings, by = "PITIndex") %>%
+  filter(!is.na(StockingYear)) %>%
+  rbind(YumaStockings %>% mutate(Year = StockingYear)) %>%
+  left_join(YumaOffspring %>%
+              select(-GSex)
+            , by = c("PITIndex" = "PIT", "Year")) %>%
+  mutate(Recruits = no_na_df(Recruits),
+         Larvae = no_na_df(Larvae)) %>%
+  mutate(Offspring = Recruits + Larvae)
 
-FebYumaSurvivorsStocked <- FebYumaSurvivors %>%
-  filter(event == "stocking")
 
 FebYumaCounts <- FebYumaSurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
+  group_by(Species, StockingSex, StockingYear, Year) %>%
+  summarise(Count = n(),
+            LarvaePos = sum(Larvae > 0),
+            RecruitsPos = sum(Recruits > 0),
+            Offspring = sum(Offspring > 0)) %>%
+  ungroup() %>%
+  mutate(PropOffspring = round(Offspring/Count, 3))
 
 FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
   filter(month(Date) == 2, day(Date) == 15) %>%
