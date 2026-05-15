@@ -19,7 +19,7 @@ YumaStockings <- StudyBWAnalysis %>% filter(event == "stocking",
   select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
          StockingSex = sex, StockingTL = total_length, Survived, MaxDAL, )
 
-IPStockings <- StudyBWAnalysis %>% filter(event == "stocking",
+IP1Stockings <- StudyBWAnalysis %>% filter(event == "stocking",
                                         location_id == 1043,
                                         release_year == 2016) %>%
   select(Species = species, PITIndex, StockingYear = release_year, StockingMonth = release_month,
@@ -101,7 +101,7 @@ YumaOffspringNoStocking <- YumaOffspring %>%
   anti_join(YumaStockings, by = c("PIT" = "PITIndex"))
 
 IPOffspringNoStocking <- IPOffspring %>% 
-  anti_join(IPStockings, by = c("PIT" = "PITIndex"))
+  anti_join(IP1Stockings %>% filter(), by = c("PIT" = "PITIndex"))
 
 
 if(sum(nrow(YumaOffspringNoStocking) + nrow(IPOffspringNoStocking)) > 0){
@@ -137,16 +137,31 @@ FebYumaCounts <- FebYumaSurvivors %>%
   ungroup() %>%
   mutate(PropOffspring = round(Offspring/Count, 3))
 
-FebIPXYTESurvivors <- KnownSurvivalIPXYTE %>%
-  filter(month(Date) == 2, day(Date) == 15) %>%
+FebIP1Survivors <- KnownSurvivalIPXYTE %>%
+  filter(month(Date) == 2, day(Date) == 15, location == "IPCA (Pond 1)") %>%
   mutate(Species = "XYTE", Year = year(Date), TagYear = as.factor(year(first_date))) %>% 
-  arrange(location, Year, PITIndex) %>%
-  select(Species, location, Year, TagYear, PITIndex, sex, total_length, event, MaxDAL, MaxScanDate)
+  arrange(Year, PITIndex) %>%
+  select(PITIndex, Year, TagYear) %>% 
+  filter(Year != TagYear) %>%
+  select(-TagYear) %>%
+  left_join(IP1Stockings, by = "PITIndex") %>%
+  filter(!is.na(StockingYear)) %>%
+  rbind(IP1Stockings %>% mutate(Year = StockingYear)) %>%
+  left_join(IPOffspring %>%
+              select(-GSex)
+            , by = c("PITIndex" = "PIT", "Year")) %>%
+  mutate(Recruits = no_na_df(Recruits),
+         Larvae = no_na_df(Larvae)) %>%
+  mutate(Offspring = Recruits + Larvae)
 
-FebIPXYTECounts <- FebIPXYTESurvivors %>%
-  group_by(Species, location, Year) %>%
-  summarise(Count = n()) %>%
-  ungroup()
+FebIP1Counts <- FebIP1Survivors %>%
+  group_by(Species, StockingSex, StockingYear, Year) %>%
+  summarise(Count = n(),
+            LarvaePos = sum(Larvae > 0),
+            RecruitsPos = sum(Recruits > 0),
+            Offspring = sum(Offspring > 0)) %>%
+  ungroup() %>%
+  mutate(PropOffspring = round(Offspring/Count, 3))
 
 AprIPGIELSurvivors <- KnownSurvivalIPGIEL %>%
   filter(month(Date) == 4, day(Date) == 15) %>%
