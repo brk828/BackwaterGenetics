@@ -262,3 +262,37 @@ AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
   group_by(Pond, Year, StockingYear, TLCM) %>%
   summarise(Count = n()) %>%
   ungroup()
+
+pos <- position_dodge(width = 0.4)
+
+YumaOffSpringPlot <- ggplot(FebYumaCounts,
+                            aes(x = as.factor(Year),
+                                y = PropOffspring,
+                                color = as.factor(StockingYear),
+                                group = as.factor(StockingYear))) +
+  geom_point(aes(size = Count), position = pos) +
+  geom_line(position = pos) +
+  geom_text(aes(label = Count),
+            vjust = -0.6,
+            size = 2.5,
+            color = "black",
+            show.legend = FALSE) +
+  facet_wrap(~ StockingSex, ncol = 1) +
+  scale_color_brewer(palette = "Dark2", name = "Stocking Year") +
+  scale_size(range = c(2, 8), name = "Survivor Count") +
+  labs(
+    x = "Year",
+    y = "Proportion Producing Offspring",
+    title = "Offspring Production by Sex, Cohort, and Year",
+    subtitle = "Point size and labels indicate number of survivors (Count)"
+  ) +
+  theme_classic(base_size = 8) +
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+png(paste0("output/YumaOffspringPlot.png"), width = 6, height = 4, units = 'in', res = 300)   
+YumaOffSpringPlot
+dev.off()
