@@ -13,7 +13,7 @@ packages(RMark) # MCR analysis
 packages(stringr) # string manipulations and function
 packages(broom.mixed) # cleanup results tables 
 
-StockingBW <- StudyBWNFWGAnalysis %>%
+StockingBW <- StudyBWAnalysis %>%
   filter(event == "stocking", first_date < as.Date("2024-10-01")) %>%
   rename(ReleaseDate = first_date) %>%
   mutate(ReleaseFY = as.factor(ifelse(month(ReleaseDate) > 9, year(ReleaseDate)+1, year(ReleaseDate))),

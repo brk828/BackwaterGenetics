@@ -6,7 +6,7 @@ packages(ggplot2) # Plotting
 packages(tidyr) # replace_na for dataframes function plus others
 packages(openxlsx) # package openxlsx is required to create to Excel files
 
-StudyBWRecaptures <- StudyBWNFWGAnalysis %>%
+StudyBWRecaptures <- StudyBWAnalysis %>%
   select(first_date, location, disposition, event, species, PITIndex, sex, total_length,
          location_id, MaxScanDate, MaxDAL, Survived) %>%
   inner_join(StudyBWNFWG %>% 

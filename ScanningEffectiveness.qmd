@@ -1,0 +1,487 @@
+---
+title: "PIT Scanner Effectiveness and Seasonal Activity"
+subtitle: "Backwater Genetics Study — Yuma Cove and Imperial Ponds"
+author: "B. Kesner"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    theme: cosmo
+    code-fold: true
+    fig-width: 9
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: pre-load
+#| include: false
+load("data/ReportingData.RData")
+```
+
+## Overview
+
+Passive Integrated Transponder (PIT) antenna scanning provides continuous detection
+data for tagged fish within each backwater and pond. A detection on a given date
+confirms fish presence, but the absence of a detection during a deployment does not
+confirm absence or mortality — it may reflect reduced fish activity near the antenna,
+short deployment duration, or seasonal movement patterns.
+
+This document characterizes how effectively PIT scanning detects fish that are known
+to be alive as a function of deployment effort and calendar month. Two methodological
+points are central to the analysis:
+
+**Effort allocation.** A single effort record commonly spans multiple calendar months.
+Effort hours and the contacts associated with a given scanner unit (EID) must be
+allocated to the specific months in which they occurred. A scanner deployed March 12
+through May 17 contributes hours — and contacts — to March, April, and May
+separately, not to a single undifferentiated deployment period.
+
+**Population-scaled detection rates.** Detection rates are calculated as the
+proportion of the **confirmed-alive population** contacted during each assessment
+period. Total contact counts cannot be used as a numerator: many contacts involve
+recently released fish that have not yet met the minimum days-at-large threshold
+(`r SurvivalDAL` days) to be considered confirmed survivors, and the population
+size changes substantially after each stocking event. Using total contacts would
+produce apparent detection rates exceeding 100% relative to the confirmed-alive
+population.
+
+The confirmed-alive population for any assessment period is defined as tagged fish
+that: (1) were released or tagged before the assessment period began, (2) had a last
+scan date on or after the start of the period (confirming continued presence), and
+(3) survived beyond the minimum days-at-large threshold. This is consistent with the
+known-survivor methodology used throughout this project.
+
+---
+
+## Setup
+
+```{r}
+#| label: setup
+
+source("LabFunctions.R")
+
+packages(dplyr)
+packages(lubridate)
+packages(ggplot2)
+packages(tidyr)
+packages(scales)
+packages(knitr)
+
+load("data/ReportingData.RData")
+
+month_levels <- c("Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec")
+
+# Location → "Location - SPECIES" label using dominant species per location
+LocationLabels <- StudyBWAnalysis |>
+  count(location, species) |>
+  group_by(location) |>
+  slice_max(n, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(LocationLabel = paste0(location, " - ", species)) |>
+  select(Location = location, LocationLabel)
+```
+
+---
+
+## Effort Preparation
+
+### Reliability Filter
+
+Effort records include both total scan hours reported by the scanner (`ScanTimeHrs`)
+and the elapsed time between deployment and retrieval (`DeployedHrs`). For a
+scanner running continuously, these two values should be nearly equal. Large
+discrepancies indicate periods when the scanner was offline, batteries failed, or
+the deployment schedule was interrupted, making the reported scan hours an unreliable
+measure of actual monitoring effort.
+
+Deployments where `ScanTimeHrs` and `DeployedHrs` differ by more than 15% are
+excluded from all effort and detection analyses. Records with zero scan hours are
+also excluded.
+
+```{r}
+#| label: reliability-filter
+
+ReliableEffort <- StudyBWEffort |>
+  mutate(PctDiff = abs(ScanTimeHrs - DeployedHrs) / DeployedHrs) |>
+  filter(DeployedHrs > 0, ScanTimeHrs > 0, PctDiff <= 0.15)
+
+# EIDs retained after filter — used to restrict contacts downstream
+ReliableEIDs <- ReliableEffort |> distinct(EID)
+
+cat("Total effort records:    ", nrow(StudyBWEffort), "\n")
+cat("Reliable records (<=15%):", nrow(ReliableEffort), "\n")
+cat("Excluded records:        ", nrow(StudyBWEffort) - nrow(ReliableEffort), "\n")
+```
+
+### Monthly Sub-Effort Allocation
+
+Each reliable deployment is split into monthly sub-efforts. The hours allocated to a
+given calendar month equal the actual time the scanner was running within that month,
+calculated from the deployment and retrieval timestamps. Sub-effort hours within a
+deployment sum exactly to `DeployedHrs`. Contacts from a given EID are then linked
+to the month in which they occurred, matching each contact to its corresponding
+sub-effort record.
+
+```{r}
+#| label: sub-effort-split
+
+SubEffort <- ReliableEffort |>
+  rowwise() |>
+  mutate(SubMonths = list({
+    month_seq <- seq(floor_date(as.Date(Deploy,   tz = "UTC"), "month"),
+                     floor_date(as.Date(Retrieve, tz = "UTC"), "month"),
+                     by = "month")
+    sub_start <- pmax(Deploy,   as.POSIXct(month_seq,                        tz = "UTC"))
+    sub_end   <- pmin(Retrieve, as.POSIXct(ceiling_date(month_seq, "month"), tz = "UTC"))
+    tibble(
+      MonthStart   = as.Date(month_seq),
+      SubEffortHrs = as.numeric(difftime(sub_end, sub_start, units = "hours"))
+    )
+  })) |>
+  unnest(SubMonths) |>
+  ungroup() |>
+  filter(SubEffortHrs > 0) |>
+  mutate(
+    ScanMonth     = month(MonthStart),
+    ScanMonthName = factor(format(MonthStart, "%b"), levels = month_levels),
+    ScanFY        = as.integer(ifelse(ScanMonth > 9,
+                                      year(MonthStart) + 1,
+                                      year(MonthStart)))
+  )
+
+cat("Reliable deployments:  ", nrow(ReliableEffort), "\n")
+cat("Monthly sub-efforts:   ", nrow(SubEffort), "\n")
+cat("Mean months/deployment:", round(nrow(SubEffort) / nrow(ReliableEffort), 1), "\n")
+```
+
+### Effort Distribution
+
+Total reliable scan hours per calendar month and fiscal year are shown below for each
+location. These values represent the actual time the scanner was operating within each
+month after splitting multi-month deployments.
+
+```{r}
+#| label: fig-effort-heatmap
+#| fig-cap: "Total reliable PIT scanning hours per calendar month and fiscal year by location, after splitting multi-month deployments. Grey cells indicate no qualifying effort in that month."
+#| fig-height: 8
+
+SubEffort |>
+  left_join(LocationLabels, by = "Location") |>
+  group_by(LocationLabel, ScanFY, ScanMonth, ScanMonthName) |>
+  summarise(TotalHrs = sum(SubEffortHrs, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = ScanMonthName, y = factor(ScanFY), fill = TotalHrs)) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  scale_fill_viridis_c(name = "Scan\nHours", option = "plasma",
+                       direction = -1, na.value = "grey92") +
+  facet_wrap(~LocationLabel, ncol = 2) +
+  labs(x = NULL, y = "Fiscal Year") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text  = element_text(face = "bold"),
+        panel.grid  = element_blank())
+```
+
+---
+
+## Monthly Detection Probability
+
+### Calculation
+
+For each location and calendar month with reliable effort, monthly detection
+probability is:
+
+$$
+p_{detection} = \frac{\text{confirmed-alive fish detected at least once (by any reliable EID)}}{\text{confirmed-alive fish in population}}
+$$
+
+The confirmed-alive population for month $m$ consists of all fish satisfying:
+`first_date` $\leq$ `MonthStart` $\leq$ `MaxScanDate` and `Survived = 1`.
+
+Contacts are restricted to reliable EIDs and to fish in the confirmed-alive pool;
+each fish is counted at most once per month regardless of how many contacts it
+generated. Location-months with fewer than five confirmed-alive fish are excluded.
+
+```{r}
+#| label: compute-monthly-detection
+
+# Location-months present in reliable effort
+MonthlyPeriods <- SubEffort |>
+  distinct(Location, MonthStart)
+
+# Confirmed-alive fish per location-month
+KnownAliveMonthly <- MonthlyPeriods |>
+  left_join(
+    StudyBWAnalysis |>
+      filter(Survived == 1) |>
+      select(Location = location, PITIndex, first_date, MaxScanDate),
+    by = join_by(Location, MonthStart >= first_date, MonthStart <= MaxScanDate)
+  ) |>
+  group_by(Location, MonthStart) |>
+  summarise(KnownAlive = n_distinct(PITIndex, na.rm = TRUE), .groups = "drop")
+
+# Contacts restricted to reliable EIDs and confirmed-alive fish;
+# deduplicated to one detection per fish per location-month
+KnownAliveContacts <- StudyBWContacts |>
+  filter(!is.na(PITIndex)) |>
+  inner_join(ReliableEIDs, by = "EID") |>
+  mutate(MonthStart = floor_date(Date, "month")) |>
+  inner_join(
+    StudyBWAnalysis |>
+      filter(Survived == 1) |>
+      select(Location = location, PITIndex, first_date, MaxScanDate),
+    by = join_by(Backwater == Location, PITIndex,
+                 MonthStart >= first_date, MonthStart <= MaxScanDate)
+  ) |>
+  distinct(Backwater, MonthStart, PITIndex) |>
+  count(Backwater, MonthStart, name = "Detected") |>
+  rename(Location = Backwater)
+
+# Monthly detection probability
+MonthlyDetection <- KnownAliveMonthly |>
+  left_join(KnownAliveContacts, by = c("Location", "MonthStart")) |>
+  mutate(
+    Detected      = coalesce(Detected, 0L),
+    DetectionRate = Detected / KnownAlive,
+    CalMonth      = month(MonthStart),
+    MonthName     = factor(format(MonthStart, "%b"), levels = month_levels),
+    ScanFY        = as.integer(ifelse(CalMonth > 9,
+                                      year(MonthStart) + 1,
+                                      year(MonthStart)))
+  ) |>
+  filter(KnownAlive >= 5)
+```
+
+### Seasonal Pattern
+
+Average monthly detection probability, pooled across all fiscal years, reveals the
+typical seasonal cycle. High detection probability months indicate periods when fish
+are active and moving past antennas; low probability months reflect reduced activity,
+shorter deployments, or both.
+
+```{r}
+#| label: fig-monthly-detection
+#| fig-cap: "Mean monthly detection probability (proportion of confirmed-alive fish contacted at least once by any reliable scanner) by location, pooled across fiscal years. Points are sized by the number of location-months contributing to each mean; ribbons show ±1 SE."
+#| fig-height: 8
+
+MonthlyDetectionSummary <- MonthlyDetection |>
+  left_join(LocationLabels, by = "Location") |>
+  group_by(Location, LocationLabel, CalMonth, MonthName) |>
+  summarise(
+    MeanDetection = mean(DetectionRate, na.rm = TRUE),
+    SE            = sd(DetectionRate,   na.rm = TRUE) / sqrt(n()),
+    N             = n(),
+    .groups       = "drop"
+  )
+
+ggplot(MonthlyDetectionSummary,
+       aes(x = MonthName, y = MeanDetection, group = LocationLabel)) +
+  geom_ribbon(aes(ymin = pmax(MeanDetection - SE, 0),
+                  ymax = pmin(MeanDetection + SE, 1)),
+              alpha = 0.2, fill = "steelblue") +
+  geom_line(color = "steelblue") +
+  geom_point(aes(size = N), color = "steelblue4") +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     limits = c(0, NA)) +
+  scale_size_continuous(name = "Location-Months", range = c(1, 5)) +
+  facet_wrap(~LocationLabel, ncol = 2, scales = "free_y") +
+  labs(x = NULL, y = "Mean Detection Probability") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text  = element_text(face = "bold"))
+```
+
+### Empirical Active Season Definition
+
+Active months are those with mean detection probability above the location-specific
+median. This data-driven threshold avoids imposing a pre-specified season and lets
+the contact pattern determine the activity calendar for each location.
+
+```{r}
+#| label: tbl-active-seasons
+#| tbl-cap: "Empirically derived active months by location. Active months have mean detection probability above the location-specific median."
+
+ActiveMonthFlags <- MonthlyDetectionSummary |>
+  group_by(Location) |>
+  mutate(MedianDetection = median(MeanDetection, na.rm = TRUE),
+         ActiveSeason    = MeanDetection > MedianDetection) |>
+  ungroup()
+
+ActiveMonthFlags |>
+  filter(ActiveSeason) |>
+  group_by(LocationLabel) |>
+  summarise(
+    `Active Months`           = paste(as.character(MonthName), collapse = ", "),
+    `Median Threshold (Det.)` = percent(unique(MedianDetection), accuracy = 0.1),
+    .groups = "drop"
+  ) |>
+  kable()
+```
+
+---
+
+## Per-Sub-Effort Detection
+
+Each reliable deployment is analyzed at the monthly sub-effort level. For a given
+EID and calendar month, the confirmed-alive fish are those meeting the known-survivor
+criteria at the sub-effort start date. The numerator is the count of those specific
+fish detected by that EID within that calendar month. Sub-effort hours
+(`SubEffortHrs`) — the actual scanning time within the month — replace total
+deployment duration as the effort metric.
+
+```{r}
+#| label: compute-subeffort-detection
+
+SubEffortDetection <- SubEffort |>
+  select(EID, Location, MonthStart, SubEffortHrs, ScanMonth, ScanMonthName) |>
+  # Confirmed-alive fish for this location at sub-effort start
+  left_join(
+    StudyBWAnalysis |>
+      filter(Survived == 1) |>
+      select(Location = location, PITIndex, first_date, MaxScanDate),
+    by = join_by(Location, MonthStart >= first_date, MonthStart <= MaxScanDate)
+  ) |>
+  # Was each confirmed-alive fish detected by this EID in this month?
+  left_join(
+    StudyBWContacts |>
+      filter(!is.na(PITIndex)) |>
+      mutate(MonthStart = floor_date(Date, "month")) |>
+      distinct(EID, MonthStart, PITIndex) |>
+      mutate(Detected = TRUE),
+    by = c("EID", "MonthStart", "PITIndex")
+  ) |>
+  mutate(Detected = coalesce(Detected, FALSE)) |>
+  group_by(EID, Location, MonthStart, SubEffortHrs, ScanMonth, ScanMonthName) |>
+  summarise(KnownAlive = n_distinct(PITIndex, na.rm = TRUE),
+            Detected   = sum(Detected),
+            .groups    = "drop") |>
+  filter(KnownAlive >= 5) |>
+  mutate(DetectionRate = Detected / KnownAlive) |>
+  left_join(
+    ActiveMonthFlags |> select(Location, CalMonth, ActiveSeason),
+    by = c("Location", "ScanMonth" = "CalMonth")
+  ) |>
+  mutate(
+    ActiveSeason = coalesce(ActiveSeason, FALSE),
+    SeasonLabel  = if_else(ActiveSeason, "Active Season", "Low-Activity Season")
+  ) |>
+  left_join(LocationLabels, by = "Location")
+```
+
+### Detection Rate by Month
+
+```{r}
+#| label: fig-detection-month
+#| fig-cap: "Per-sub-effort detection rates (proportion of confirmed-alive fish detected) by calendar month and location. Each point represents one EID × month sub-effort. Only sub-efforts with ≥5 confirmed-alive fish are shown. Fill indicates empirical season classification."
+#| fig-height: 8
+
+season_colors <- c("Active Season"       = "#2166ac",
+                   "Low-Activity Season" = "#d4891a")
+
+ggplot(SubEffortDetection,
+       aes(x = ScanMonthName, y = DetectionRate, fill = SeasonLabel)) +
+  geom_boxplot(outlier.size = 0.8, alpha = 0.7, linewidth = 0.4) +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     limits = c(0, NA)) +
+  scale_fill_manual(values = season_colors) +
+  facet_wrap(~LocationLabel, ncol = 2, scales = "free_y") +
+  labs(x = NULL,
+       y = "Detection Rate (proportion of confirmed-alive fish detected)",
+       fill = "Season") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x     = element_text(angle = 45, hjust = 1),
+        strip.text      = element_text(face = "bold"),
+        legend.position = "bottom")
+```
+
+### Detection Rate vs. Sub-Effort Hours
+
+Within a season, longer sub-efforts should contact a greater proportion of the
+confirmed-alive population, with diminishing returns as all active fish near the
+antenna are eventually detected. The sub-effort hours on the x-axis represent the
+actual scanning time within the calendar month, providing a consistent effort metric
+across both short partial-month sub-efforts and full-month sub-efforts.
+
+```{r}
+#| label: fig-detection-effort
+#| fig-cap: "Per-sub-effort detection rate as a function of sub-effort hours (actual scanning time within the calendar month) by season. Smoothed loess trends with 95% confidence bands are shown. Active season sub-efforts typically achieve higher detection at equivalent scan hours."
+#| fig-height: 8
+
+ggplot(SubEffortDetection |> filter(SubEffortHrs > 0),
+       aes(x = SubEffortHrs, y = DetectionRate, color = SeasonLabel)) +
+  geom_point(alpha = 0.45, size = 1.2) +
+  geom_smooth(method = "loess", se = TRUE, linewidth = 0.9, span = 0.9) +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     limits = c(0, NA)) +
+  scale_color_manual(values = season_colors) +
+  facet_wrap(~LocationLabel, ncol = 2, scales = "free") +
+  labs(x = "Sub-Effort Hours (scanning time within calendar month)",
+       y = "Detection Rate (proportion of confirmed-alive fish detected)",
+       color = "Season") +
+  theme_minimal(base_size = 10) +
+  theme(strip.text      = element_text(face = "bold"),
+        legend.position = "bottom")
+```
+
+---
+
+## Summary
+
+```{r}
+#| label: tbl-summary
+#| tbl-cap: "Summary of per-sub-effort detection rates by location and season. N = qualifying sub-efforts (≥5 confirmed-alive fish). Mean sub-effort hours reflects typical scanning time per month within each season."
+
+SubEffortDetection |>
+  group_by(LocationLabel, SeasonLabel) |>
+  summarise(
+    N                   = n(),
+    `Mean Sub-Eff. Hrs` = round(mean(SubEffortHrs,   na.rm = TRUE), 1),
+    `Mean Known Alive`  = round(mean(KnownAlive),    0),
+    `Mean Det. Rate`    = percent(mean(DetectionRate),   accuracy = 0.1),
+    `Median Det. Rate`  = percent(median(DetectionRate), accuracy = 0.1),
+    .groups = "drop"
+  ) |>
+  rename(Location = LocationLabel, Season = SeasonLabel) |>
+  kable()
+```
+
+---
+
+## Interpretation and Caveats
+
+::: {.callout-note}
+## Detection Rate vs. Absence
+
+A low per-sub-effort detection rate does not indicate that undetected fish are absent
+or dead. It indicates that conditions during that period — season, scan duration, or
+fish behavior — were insufficient to contact all confirmed-alive fish. Survival
+analyses based on last-scan dates should be interpreted in light of whether
+meaningful effort from reliable scanners occurred after a fish's last detection, and
+whether that effort fell during an active or low-activity season.
+:::
+
+::: {.callout-important}
+## Confirmed-Alive Population is a Minimum Count
+
+The confirmed-alive denominator requires both a pre-period release date and a
+post-period confirmation scan. Fish that were genuinely alive during an assessment
+period but whose last scan preceded the period start are excluded from the
+denominator. This means detection rates may be slightly overestimated in early
+periods and underestimated near the most recent data where fewer fish have
+post-period confirmation scans.
+:::
+
+::: {.callout-warning}
+## Reliability Exclusions
+
+`r nrow(StudyBWEffort) - nrow(ReliableEffort)` effort records were excluded due to
+discrepancies greater than 15% between `ScanTimeHrs` and `DeployedHrs`. Contacts
+associated with those records are also excluded from all detection analyses. Effort
+patterns and detection rates reflect only the `r nrow(ReliableEffort)` deployments
+where continuous operation could be assumed.
+:::

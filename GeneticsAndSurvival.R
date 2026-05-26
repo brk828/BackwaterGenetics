@@ -42,19 +42,19 @@ rm(StudyBWGrowth, StudyBWEffort, StudyBWCaptureUniques, StudyBWTransfersAnalysis
 # Bring in larval and recruit counts by PIT tag from Dowling data for Yuma and IP1 stored as csv files in
 # data directory Combine larvae and recruits per backwater and create a single dataframe for all sexes
 # and all reproductive output
-YumaLarvalMoms <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_larvae_mothers_repro_counts_PIT.csv") %>%
+YumaLarvalMoms <- read.csv("data/Yuma_larvae_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
   mutate(GSex = "F", PIT = toupper(PIT))
 
-YumaLarvalDads <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_larvae_fathers_repro_counts_PIT.csv") %>%
+YumaLarvalDads <- read.csv("data/Yuma_larvae_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
   mutate(GSex = "M", PIT = toupper(PIT))
 
-YumaRecruitsMoms <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_recruits_mothers_repro_counts_PIT.csv") %>%
+YumaRecruitsMoms <- read.csv("data/Yuma_recruits_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
   mutate(GSex = "F", PIT = toupper(PIT))
 
-YumaRecruitsDads <- read.csv("C:/GIT/BackwaterGenetics/data/Yuma_recruits_fathers_repro_counts_PIT.csv") %>%
+YumaRecruitsDads <- read.csv("data/Yuma_recruits_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
   mutate(GSex = "M", PIT = toupper(PIT))
 
@@ -76,19 +76,19 @@ YumaOffspring <- full_join(YumaLarvalParents, YumaRecruitParents, by = c("Year",
 
 rm(YumaLarvalMoms, YumaLarvalDads, YumaRecruitsMoms, YumaRecruitsDads, YumaLarvalParents)  
 
-IPLarvalMoms <- read.csv("C:/GIT/BackwaterGenetics/data/IP_larvae_mothers_repro_counts_PIT.csv") %>%
+IPLarvalMoms <- read.csv("data/IP_larvae_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
   mutate(GSex = "F", PIT = toupper(PIT))
 
-IPLarvalDads <- read.csv("C:/GIT/BackwaterGenetics/data/IP_larvae_fathers_repro_counts_PIT.csv") %>%
+IPLarvalDads <- read.csv("data/IP_larvae_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Larvae = offspring_count) %>% select(Year, PIT, Larvae) %>%
   mutate(GSex = "M", PIT = toupper(PIT))
 
-IPRecruitsMoms <- read.csv("C:/GIT/BackwaterGenetics/data/IP_recruits_mothers_repro_counts_PIT.csv") %>%
+IPRecruitsMoms <- read.csv("data/IP_recruits_mothers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
   mutate(GSex = "F", PIT = toupper(PIT))
 
-IPRecruitsDads <- read.csv("C:/GIT/BackwaterGenetics/data/IP_recruits_fathers_repro_counts_PIT.csv") %>%
+IPRecruitsDads <- read.csv("data/IP_recruits_fathers_repro_counts_PIT.csv") %>%
   rename(PIT = PIT.TAG, Recruits = offspring_count) %>% select(Year, PIT, Recruits) %>%
   mutate(GSex = "M", PIT = toupper(PIT))
 
