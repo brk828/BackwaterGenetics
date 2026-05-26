@@ -1,0 +1,156 @@
+---
+title: "Backwater Stocking and Capture Event Summary"
+subtitle: "Backwater Genetics Study — Yuma Cove and Imperial Ponds"
+author: "B. Kesner"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    theme: cosmo
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+source("LabFunctions.R")
+packages(dplyr)
+packages(lubridate)
+packages(knitr)
+packages(kableExtra)
+
+load("data/ReportingData.RData")
+
+month_levels <- c("Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec")
+
+# ── Stocking summary ──────────────────────────────────────────────────────────
+# One row per fish per stocking event; count distinct PITIndex by BW / FY / month
+
+StockingSummary <- StudyBWNFWG |>
+  filter(event == "stocking") |>
+  mutate(
+    FY        = as.integer(ifelse(CollectionMonth > 9,
+                                  CollectionYear + 1, CollectionYear)),
+    MonthName = factor(month.abb[CollectionMonth], levels = month_levels)
+  ) |>
+  group_by(Backwater, FY, CollectionMonth, MonthName) |>
+  summarise(
+    Stocked  = n_distinct(PITIndex),
+    Males    = sum(sex == "M",                na.rm = TRUE),
+    Females  = sum(sex == "F",                na.rm = TRUE),
+    Unknown  = sum(!sex %in% c("M", "F"),     na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(Backwater, FY, CollectionMonth)
+
+# ── Capture summary ───────────────────────────────────────────────────────────
+# Tagging status : FirstRecord == 1 → Newly Tagged; 0 → Recaptured
+# Disposition    : Transfer == 0 & Mortality == 0 → Released
+#                  Transfer == 1                  → Transferred
+#                  Mortality == 1                  → Mortality
+
+CaptureSummary <- StudyBWCaptureUniques |>
+  mutate(
+    FY        = as.integer(ifelse(CollectionMonth > 9,
+                                  CollectionYear + 1, CollectionYear)),
+    MonthName = factor(month.abb[CollectionMonth], levels = month_levels)
+  ) |>
+  group_by(Backwater, FY, CollectionMonth, MonthName) |>
+  summarise(
+    Total        = n(),
+    `Newly Tagged` = sum(FirstRecord == 1),
+    Recaptured   = sum(FirstRecord == 0),
+    Released     = sum(Transfer == 0 & Mortality == 0),
+    Transferred  = sum(Transfer == 1),
+    Mortality    = sum(Mortality == 1),
+    .groups = "drop"
+  ) |>
+  arrange(Backwater, FY, CollectionMonth)
+
+backwaters <- sort(unique(c(StockingSummary$Backwater,
+                             CaptureSummary$Backwater)))
+```
+
+## Overview
+
+This document summarises all stocking and capture events recorded in each study
+backwater by fiscal year (FY) and calendar month. Each section covers one
+location.
+
+**Stocking tables** show the number of PIT-tagged fish stocked in each
+FY / month.
+
+**Capture tables** break down each FY / month by:
+
+- *Tagging status* — fish captured for the first time in this backwater
+  (Newly Tagged) versus fish captured on a previous occasion (Recaptured).
+- *Disposition* — fish returned to the backwater (Released), removed and
+  stocked elsewhere (Transferred), or recovered dead (Mortality).
+
+---
+
+```{r}
+#| label: location-tables
+#| results: asis
+
+for (bw in backwaters) {
+
+  # Section header
+  cat("\n\n## ", bw, "\n\n", sep = "")
+
+  # ── Stockings ──────────────────────────────────────────────────────────────
+  stk <- StockingSummary |>
+    filter(Backwater == bw) |>
+    mutate(FY = as.character(FY)) |>
+    select(FY, Month = MonthName, Stocked, Males, Females, Unknown)
+
+  cat("### Stockings\n\n")
+
+  if (nrow(stk) == 0) {
+    cat("*No stocking records for this location.*\n\n")
+  } else {
+    stk |>
+      kbl(align = c("r", "l", rep("r", 4)),
+          format.args = list(big.mark = ",")) |>
+      kable_styling(bootstrap_options = c("striped", "condensed", "hover"),
+                    full_width = FALSE,
+                    position   = "left") |>
+      add_header_above(c(" " = 3, "Sex" = 3)) |>
+      print()
+    cat("\n\n")
+  }
+
+  # ── Captures ───────────────────────────────────────────────────────────────
+  cap <- CaptureSummary |>
+    filter(Backwater == bw) |>
+    mutate(FY = as.character(FY)) |>
+    select(FY, Month = MonthName,
+           Total, `Newly Tagged`, Recaptured,
+           Released, Transferred, Mortality)
+
+  cat("### Captures\n\n")
+
+  if (nrow(cap) == 0) {
+    cat("*No capture records for this location.*\n\n")
+  } else {
+    cap |>
+      kbl(align = c("r", "l", rep("r", 6)),
+          format.args = list(big.mark = ",")) |>
+      kable_styling(bootstrap_options = c("striped", "condensed", "hover"),
+                    full_width = FALSE,
+                    position   = "left") |>
+      add_header_above(c(" " = 3,
+                         "Tagging Status" = 2,
+                         "Disposition"    = 3)) |>
+      print()
+    cat("\n\n")
+  }
+}
+```
