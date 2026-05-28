@@ -4,78 +4,80 @@
 load("data/ReportingData.RData")
 load("data/KnownSurvivalCounts.RData")
 
-TotalCountIPXYTE <- TotalCountIPXYTE %>%
-  rename(Location = location)
-
-TotalCountIPGIEL <- TotalCountIPGIEL %>%
-  rename(Location = location)
 
 packages(dplyr)     # data manipulation
 packages(lubridate) # date and time manipulation
 packages(ggplot2) # Plotting
 packages(stringr) # string manipulations and function
 
+TotalCountIPXYTE <- TotalCountIPXYTE %>%
+  rename(Backwater = location)
+
+TotalCountIPGIEL <- TotalCountIPGIEL %>%
+  rename(Backwater = location)
+
+
 # Razorback sucker stocked in Winter, bonytail in spring. 
 
 # Marks are restricted to January or February of the census year (month < 3)
 # tagging must have occurred at least six months prior to the first scannning month
 BWMarks <- StudyBWContacts %>% 
-  filter(!is.na(tagging_date)) %>%
-  filter(Date >= tagging_date %m+% months(6)) %>%
-  select(Location, Species, Date, PITIndex, tagging_date) %>%
+  filter(!is.na(available_date)) %>%
+  filter(Date >= available_date %m+% months(6)) %>%
+  select(Backwater, Species, Date, PITIndex, available_date) %>%
   filter(month(Date) < 3) %>%
   mutate(CensusYear = year(Date)) %>%
-  group_by(CensusYear, Species, Location, PITIndex, tagging_date) %>%
+  group_by(CensusYear, Species, Backwater, PITIndex, available_date) %>%
   summarise(Contacts = n(), FirstScan = min(Date), LastScan = max(Date)) %>%
   ungroup()
 
 # Captures are restricted to October through April (month > 9 or month < 5)
 # The census year is the year in which the October scanning begins but a year less
 # than scans for January through April, Fiscal Year is a year ahead of this schedule 
-# Filtered for 15 months so as same tagging_date cutoff as for marks (10 - 1 = 9)
+# Filtered for 15 months so as same available_date cutoff as for marks (10 - 1 = 9)
 BWCaptures <- StudyBWContacts %>% 
-  filter(!is.na(tagging_date)) %>%
-  filter(Date >= tagging_date %m+% months(15)) %>%
-  select(Location, Species, Date, PITIndex, ScanFY, tagging_date)  %>%
+  filter(!is.na(available_date)) %>%
+  filter(Date >= available_date %m+% months(15)) %>%
+  select(Backwater, Species, Date, PITIndex, ScanFY, available_date)  %>%
   filter(month(Date) > 9| month(Date) < 5) %>%
   mutate(CensusYear = ScanFY - 1) %>%
-  group_by(CensusYear, Species, Location, PITIndex, tagging_date) %>%
+  group_by(CensusYear, Species, Backwater, PITIndex, available_date) %>%
   summarise(Contacts = n(), FirstScan = min(Date), LastScan = max(Date)) %>%
   ungroup()
 
 BWRecaptures <- BWMarks %>%
-  select(Location, Species, CensusYear, PITIndex) %>%
+  select(Backwater, Species, CensusYear, PITIndex) %>%
   inner_join(BWCaptures %>%
-               select(Location, Species, CensusYear, PITIndex), 
-             by = c("Location" = "Location",
+               select(Backwater, Species, CensusYear, PITIndex), 
+             by = c("Backwater" = "Backwater",
                     "Species" = "Species",
                     "CensusYear" = "CensusYear", 
                     "PITIndex" = "PITIndex"))
 
 BWMark <-BWMarks %>%
-  group_by(Location, Species, CensusYear) %>%
+  group_by(Backwater, Species, CensusYear) %>%
   summarise(M = n_distinct(PITIndex)) %>%
   ungroup()
 
 BWCapture <- BWCaptures %>%
-  group_by(Location, Species, CensusYear) %>%
+  group_by(Backwater, Species, CensusYear) %>%
   summarise(C = n_distinct(PITIndex)) %>%
   ungroup()
 
 BWRecapture <- BWRecaptures %>%
-  group_by(Location, Species, CensusYear) %>%
+  group_by(Backwater, Species, CensusYear) %>%
   summarise(R = n_distinct(PITIndex)) %>%
   ungroup()
 
 BWEstimates <- BWMark %>%
   inner_join(BWCapture, by = c("Species" = "Species",
-                              "Location" = "Location",
+                              "Backwater" = "Backwater",
                               "CensusYear" = "CensusYear")) %>%
   inner_join(BWRecapture, by =  c("Species" = "Species",
-                                  "Location" = "Location",
+                                  "Backwater" = "Backwater",
                                   "CensusYear" = "CensusYear")) %>%
   filter(R>3) %>%
-  arrange(Location, Species, CensusYear) %>%
+  arrange(Backwater, Species, CensusYear) %>%
   mutate(LowerBoundR = qpois(0.025, R),
          UpperBoundR = qpois(0.975, R),
          Estimate = as.integer(((M + 1) * (C + 1))/(R + 1))) %>%
@@ -88,7 +90,7 @@ BWEstimates <- BWMark %>%
   mutate(CensusDate = as.Date(paste0(CensusYear, "-01-01")))
 
 YumaEstimatePlot <- ggplot(BWEstimates %>%
-                             filter(Location == "Yuma Cove backwater"), 
+                             filter(Backwater == "Yuma Cove backwater"), 
                            aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
@@ -107,7 +109,7 @@ YumaEstimatePlot <- ggplot(BWEstimates %>%
 YumaEstimatePlot
 
 IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
-                             filter(str_starts(Location, "IPCA"), Species == "XYTE"), 
+                             filter(str_starts(Backwater, "IPCA"), Species == "XYTE"), 
                            aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
@@ -118,7 +120,7 @@ IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
   theme(axis.text = element_text(size = 11),
         axis.line = element_line(color = "black"),
         panel.grid.minor = element_blank()) +
-  facet_wrap(~Location, nrow=3) +
+  facet_wrap(~Backwater, nrow=3) +
   geom_line(data = TotalCountIPXYTE,
             aes(x = Date, y = Count),
             linewidth = 1.2, alpha = 0.3)
@@ -126,7 +128,7 @@ IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
 IPXYTEEstimatePlot
 
 IPGIELEstimatePlot <- ggplot(BWEstimates %>%
-                               filter(str_starts(Location, "IPCA"), Species == "GIEL"), 
+                               filter(str_starts(Backwater, "IPCA"), Species == "GIEL"), 
                              aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
@@ -137,7 +139,7 @@ IPGIELEstimatePlot <- ggplot(BWEstimates %>%
   theme(axis.text = element_text(size = 11),
         axis.line = element_line(color = "black"),
         panel.grid.minor = element_blank()) +
-  facet_wrap(~Location, nrow=3) +
+  facet_wrap(~Backwater, nrow=3) +
   geom_line(data = TotalCountIPGIEL,
             aes(x = Date, y = Count),
             linewidth = 1.2, alpha = 0.3)
