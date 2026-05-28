@@ -10,6 +10,9 @@ format:
     embed-resources: true
     theme: cosmo
     code-fold: true
+  docx:
+    toc: true
+    toc-depth: 2
 execute:
   warning: false
   message: false
@@ -23,7 +26,7 @@ source("LabFunctions.R")
 packages(dplyr)
 packages(lubridate)
 packages(knitr)
-packages(kableExtra)
+packages(flextable)
 
 load("data/ReportingData.RData")
 
@@ -31,16 +34,14 @@ month_levels <- c("Jan","Feb","Mar","Apr","May","Jun",
                   "Jul","Aug","Sep","Oct","Nov","Dec")
 
 # ── Stocking summary ──────────────────────────────────────────────────────────
-# One row per fish per stocking event; count distinct PITIndex by BW / FY / month
+# One row per fish per stocking event; count distinct PITIndex by BW / year / month
 
 StockingSummary <- StudyBWNFWG |>
   filter(event == "stocking") |>
   mutate(
-    FY        = as.integer(ifelse(CollectionMonth > 9,
-                                  CollectionYear + 1, CollectionYear)),
     MonthName = factor(month.abb[CollectionMonth], levels = month_levels)
   ) |>
-  group_by(Backwater, FY, CollectionMonth, MonthName) |>
+  group_by(Backwater, CollectionYear, CollectionMonth, MonthName) |>
   summarise(
     Stocked  = n_distinct(PITIndex),
     Males    = sum(sex == "M",                na.rm = TRUE),
@@ -48,7 +49,7 @@ StockingSummary <- StudyBWNFWG |>
     Unknown  = sum(!sex %in% c("M", "F"),     na.rm = TRUE),
     .groups = "drop"
   ) |>
-  arrange(Backwater, FY, CollectionMonth)
+  arrange(Backwater, CollectionYear, CollectionMonth)
 
 # ── Capture summary ───────────────────────────────────────────────────────────
 # Tagging status : FirstRecord == 1 → Newly Tagged; 0 → Recaptured
@@ -58,21 +59,18 @@ StockingSummary <- StudyBWNFWG |>
 
 CaptureSummary <- StudyBWCaptureUniques |>
   mutate(
-    FY        = as.integer(ifelse(CollectionMonth > 9,
-                                  CollectionYear + 1, CollectionYear)),
     MonthName = factor(month.abb[CollectionMonth], levels = month_levels)
   ) |>
-  group_by(Backwater, FY, CollectionMonth, MonthName) |>
+  group_by(Backwater, CollectionYear, CollectionMonth, MonthName) |>
   summarise(
-    Total        = n(),
     `Newly Tagged` = sum(FirstRecord == 1),
     Recaptured   = sum(FirstRecord == 0),
     Released     = sum(Transfer == 0 & Mortality == 0),
+    ReleasedNew  = sum(Transfer == 0 & Mortality == 0 & FirstRecord == 1),
     Transferred  = sum(Transfer == 1),
-    Mortality    = sum(Mortality == 1),
     .groups = "drop"
   ) |>
-  arrange(Backwater, FY, CollectionMonth)
+  arrange(Backwater, CollectionYear, CollectionMonth)
 
 backwaters <- sort(unique(c(StockingSummary$Backwater,
                              CaptureSummary$Backwater)))
@@ -81,18 +79,17 @@ backwaters <- sort(unique(c(StockingSummary$Backwater,
 ## Overview
 
 This document summarises all stocking and capture events recorded in each study
-backwater by fiscal year (FY) and calendar month. Each section covers one
-location.
+backwater by year and calendar month. Each section covers one location.
 
 **Stocking tables** show the number of PIT-tagged fish stocked in each
-FY / month.
+year / month.
 
-**Capture tables** break down each FY / month by:
+**Capture tables** break down each year / month by:
 
 - *Tagging status* — fish captured for the first time in this backwater
   (Newly Tagged) versus fish captured on a previous occasion (Recaptured).
-- *Disposition* — fish returned to the backwater (Released), removed and
-  stocked elsewhere (Transferred), or recovered dead (Mortality).
+- *Disposition* — fish returned to the backwater (Released) or removed and
+  stocked elsewhere (Transferred).
 
 ---
 
@@ -108,8 +105,8 @@ for (bw in backwaters) {
   # ── Stockings ──────────────────────────────────────────────────────────────
   stk <- StockingSummary |>
     filter(Backwater == bw) |>
-    mutate(FY = as.character(FY)) |>
-    select(FY, Month = MonthName, Stocked, Males, Females, Unknown)
+    select(Year = CollectionYear, Month = MonthName, Stocked, Males, Females, Unknown) |>
+    mutate(Year = as.character(Year))
 
   cat("### Stockings\n\n")
 
@@ -117,23 +114,31 @@ for (bw in backwaters) {
     cat("*No stocking records for this location.*\n\n")
   } else {
     stk |>
-      kbl(align = c("r", "l", rep("r", 4)),
-          format.args = list(big.mark = ",")) |>
-      kable_styling(bootstrap_options = c("striped", "condensed", "hover"),
-                    full_width = FALSE,
-                    position   = "left") |>
-      add_header_above(c(" " = 3, "Sex" = 3)) |>
-      print()
+      flextable() |>
+      add_header_row(values = c("", "Sex"), colwidths = c(3, 3)) |>
+      theme_booktabs() |>
+      bold(part = "header") |>
+      align(align = "center", part = "header") |>
+      align(j = "Month", align = "left", part = "body") |>
+      align(j = c("Year", "Stocked", "Males", "Females", "Unknown"),
+            align = "right", part = "body") |>
+      colformat_num(j = c("Stocked", "Males", "Females", "Unknown"), big.mark = ",") |>
+      bg(i = which(seq_len(nrow(stk)) %% 2 == 0), bg = "#F2F2F2", part = "body") |>
+      autofit() |>
+      flextable_to_rmd()
     cat("\n\n")
   }
 
   # ── Captures ───────────────────────────────────────────────────────────────
   cap <- CaptureSummary |>
     filter(Backwater == bw) |>
-    mutate(FY = as.character(FY)) |>
-    select(FY, Month = MonthName,
-           Total, `Newly Tagged`, Recaptured,
-           Released, Transferred, Mortality)
+    mutate(
+      `Released (Newly Tagged)` = paste0(Released, " (", ReleasedNew, ")"),
+      Year = as.character(CollectionYear)
+    ) |>
+    select(Year, Month = MonthName,
+           `Newly Tagged`, Recaptured,
+           `Released (Newly Tagged)`, Transferred)
 
   cat("### Captures\n\n")
 
@@ -141,15 +146,23 @@ for (bw in backwaters) {
     cat("*No capture records for this location.*\n\n")
   } else {
     cap |>
-      kbl(align = c("r", "l", rep("r", 6)),
-          format.args = list(big.mark = ",")) |>
-      kable_styling(bootstrap_options = c("striped", "condensed", "hover"),
-                    full_width = FALSE,
-                    position   = "left") |>
-      add_header_above(c(" " = 3,
-                         "Tagging Status" = 2,
-                         "Disposition"    = 3)) |>
-      print()
+      flextable() |>
+      add_header_row(
+        values    = c("", "Tagging Status", "Disposition"),
+        colwidths = c(2, 2, 2)
+      ) |>
+      theme_booktabs() |>
+      bold(part = "header") |>
+      align(align = "center", part = "header") |>
+      align(j = "Month", align = "left", part = "body") |>
+      align(j = c("Year", "Newly Tagged", "Recaptured",
+                  "Released (Newly Tagged)", "Transferred"),
+            align = "right", part = "body") |>
+      colformat_num(j = c("Newly Tagged", "Recaptured", "Transferred"),
+                    big.mark = ",") |>
+      bg(i = which(seq_len(nrow(cap)) %% 2 == 0), bg = "#F2F2F2", part = "body") |>
+      autofit() |>
+      flextable_to_rmd()
     cat("\n\n")
   }
 }

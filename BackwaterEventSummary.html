@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="B. Kesner">
-<meta name="dcterms.date" content="2026-05-26">
+<meta name="dcterms.date" content="2026-05-27">
 
 <title>Backwater Stocking and Capture Event Summary</title>
 <style>
@@ -2242,7 +2242,7 @@ vertical-align: -.125em;
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">May 26, 2026</p>
+      <p class="date">May 27, 2026</p>
     </div>
   </div>
   
@@ -2261,7 +2261,7 @@ vertical-align: -.125em;
 <p><strong>Capture tables</strong> break down each FY / month by:</p>
 <ul>
 <li><em>Tagging status</em> — fish captured for the first time in this backwater (Newly Tagged) versus fish captured on a previous occasion (Recaptured).</li>
-<li><em>Disposition</em> — fish returned to the backwater (Released), removed and stocked elsewhere (Transferred), or recovered dead (Mortality).</li>
+<li><em>Disposition</em> — fish returned to the backwater (Released) or removed and stocked elsewhere (Transferred).</li>
 </ul>
 <hr>
 <details class="code-fold">
@@ -2274,8 +2274,8 @@ vertical-align: -.125em;
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="co"># ── Stockings ──────────────────────────────────────────────────────────────</span></span>
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  stk <span class="ot">&lt;-</span> StockingSummary <span class="sc">|&gt;</span></span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">filter</span>(Backwater <span class="sc">==</span> bw) <span class="sc">|&gt;</span></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">FY =</span> <span class="fu">as.character</span>(FY)) <span class="sc">|&gt;</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">select</span>(FY, <span class="at">Month =</span> MonthName, Stocked, Males, Females, Unknown)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">select</span>(<span class="at">Year =</span> CollectionYear, <span class="at">Month =</span> MonthName, Stocked, Males, Females, Unknown) <span class="sc">|&gt;</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">Year =</span> <span class="fu">as.character</span>(Year))</span>
 <span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">&quot;### Stockings</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a></span>
@@ -2296,29 +2296,32 @@ vertical-align: -.125em;
 <span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>  <span class="co"># ── Captures ───────────────────────────────────────────────────────────────</span></span>
 <span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>  cap <span class="ot">&lt;-</span> CaptureSummary <span class="sc">|&gt;</span></span>
 <span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>    <span class="fu">filter</span>(Backwater <span class="sc">==</span> bw) <span class="sc">|&gt;</span></span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">FY =</span> <span class="fu">as.character</span>(FY)) <span class="sc">|&gt;</span></span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>    <span class="fu">select</span>(FY, <span class="at">Month =</span> MonthName,</span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>           Total, <span class="st">`</span><span class="at">Newly Tagged</span><span class="st">`</span>, Recaptured,</span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>           Released, Transferred, Mortality)</span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">&quot;### Captures</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
-<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">nrow</span>(cap) <span class="sc">==</span> <span class="dv">0</span>) {</span>
-<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">&quot;*No capture records for this location.*</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
-<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a>  } <span class="cf">else</span> {</span>
-<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>    cap <span class="sc">|&gt;</span></span>
-<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>      <span class="fu">kbl</span>(<span class="at">align =</span> <span class="fu">c</span>(<span class="st">&quot;r&quot;</span>, <span class="st">&quot;l&quot;</span>, <span class="fu">rep</span>(<span class="st">&quot;r&quot;</span>, <span class="dv">6</span>)),</span>
-<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>          <span class="at">format.args =</span> <span class="fu">list</span>(<span class="at">big.mark =</span> <span class="st">&quot;,&quot;</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a>      <span class="fu">kable_styling</span>(<span class="at">bootstrap_options =</span> <span class="fu">c</span>(<span class="st">&quot;striped&quot;</span>, <span class="st">&quot;condensed&quot;</span>, <span class="st">&quot;hover&quot;</span>),</span>
-<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>                    <span class="at">full_width =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a>                    <span class="at">position   =</span> <span class="st">&quot;left&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>      <span class="fu">add_header_above</span>(<span class="fu">c</span>(<span class="st">&quot; &quot;</span> <span class="ot">=</span> <span class="dv">3</span>,</span>
-<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&quot;Tagging Status&quot;</span> <span class="ot">=</span> <span class="dv">2</span>,</span>
-<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&quot;Disposition&quot;</span>    <span class="ot">=</span> <span class="dv">3</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>      <span class="fu">print</span>()</span>
-<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">&quot;</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
-<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>  }</span>
-<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>      <span class="st">`</span><span class="at">Released (Newly Tagged)</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">paste0</span>(Released, <span class="st">&quot; (&quot;</span>, ReleasedNew, <span class="st">&quot;)&quot;</span>),</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>      <span class="at">Year =</span> <span class="fu">as.character</span>(CollectionYear)</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    ) <span class="sc">|&gt;</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>    <span class="fu">select</span>(Year, <span class="at">Month =</span> MonthName,</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>           Total, <span class="st">`</span><span class="at">Newly Tagged</span><span class="st">`</span>, Recaptured,</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>           <span class="st">`</span><span class="at">Released (Newly Tagged)</span><span class="st">`</span>, Transferred)</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">&quot;### Captures</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> (<span class="fu">nrow</span>(cap) <span class="sc">==</span> <span class="dv">0</span>) {</span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">&quot;*No capture records for this location.*</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>  } <span class="cf">else</span> {</span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a>    cap <span class="sc">|&gt;</span></span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>      <span class="fu">kbl</span>(<span class="at">align =</span> <span class="fu">c</span>(<span class="st">&quot;r&quot;</span>, <span class="st">&quot;l&quot;</span>, <span class="fu">rep</span>(<span class="st">&quot;r&quot;</span>, <span class="dv">5</span>)),</span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a>          <span class="at">format.args =</span> <span class="fu">list</span>(<span class="at">big.mark =</span> <span class="st">&quot;,&quot;</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a>      <span class="fu">kable_styling</span>(<span class="at">bootstrap_options =</span> <span class="fu">c</span>(<span class="st">&quot;striped&quot;</span>, <span class="st">&quot;condensed&quot;</span>, <span class="st">&quot;hover&quot;</span>),</span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>                    <span class="at">full_width =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>                    <span class="at">position   =</span> <span class="st">&quot;left&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a>      <span class="fu">add_header_above</span>(<span class="fu">c</span>(<span class="st">&quot; &quot;</span> <span class="ot">=</span> <span class="dv">3</span>,</span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&quot;Tagging Status&quot;</span> <span class="ot">=</span> <span class="dv">2</span>,</span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&quot;Disposition&quot;</span>    <span class="ot">=</span> <span class="dv">2</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>      <span class="fu">print</span>()</span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">&quot;</span><span class="sc">\n\n</span><span class="st">&quot;</span>)</span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 </section>
 <section id="ipca-pond-1" class="level2">
@@ -2338,7 +2341,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -2360,7 +2363,7 @@ Unknown
 <tbody>
 <tr>
 <td style="text-align:right;">
-2017
+2016
 </td>
 <td style="text-align:left;">
 Dec
@@ -2380,7 +2383,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2025
+2024
 </td>
 <td style="text-align:left;">
 Nov
@@ -2413,7 +2416,7 @@ Nov
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -2421,7 +2424,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -2436,17 +2439,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+36
+</td>
+<td style="text-align:right;">
+2
+</td>
+<td style="text-align:right;">
+34
+</td>
+<td style="text-align:right;">
+36 (2)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -2464,10 +2487,7 @@ Feb
 17
 </td>
 <td style="text-align:right;">
-18
-</td>
-<td style="text-align:right;">
-0
+18 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -2490,10 +2510,7 @@ Mar
 13
 </td>
 <td style="text-align:right;">
-13
-</td>
-<td style="text-align:right;">
-0
+13 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -2504,22 +2521,19 @@ Mar
 2018
 </td>
 <td style="text-align:left;">
-Nov
+Dec
 </td>
 <td style="text-align:right;">
-36
+80
 </td>
 <td style="text-align:right;">
-2
+71
 </td>
 <td style="text-align:right;">
-34
+9
 </td>
 <td style="text-align:right;">
-36
-</td>
-<td style="text-align:right;">
-0
+80 (71)
 </td>
 <td style="text-align:right;">
 0
@@ -2542,10 +2556,7 @@ Jan
 7
 </td>
 <td style="text-align:right;">
-26
-</td>
-<td style="text-align:right;">
-0
+26 (19)
 </td>
 <td style="text-align:right;">
 0
@@ -2568,10 +2579,7 @@ Feb
 15
 </td>
 <td style="text-align:right;">
-63
-</td>
-<td style="text-align:right;">
-0
+63 (48)
 </td>
 <td style="text-align:right;">
 0
@@ -2580,32 +2588,6 @@ Feb
 <tr>
 <td style="text-align:right;">
 2019
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-80
-</td>
-<td style="text-align:right;">
-71
-</td>
-<td style="text-align:right;">
-9
-</td>
-<td style="text-align:right;">
-80
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2020
 </td>
 <td style="text-align:left;">
 Dec
@@ -2620,10 +2602,7 @@ Dec
 6
 </td>
 <td style="text-align:right;">
-61
-</td>
-<td style="text-align:right;">
-0
+61 (55)
 </td>
 <td style="text-align:right;">
 0
@@ -2631,7 +2610,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2021
+2020
 </td>
 <td style="text-align:left;">
 Dec
@@ -2646,10 +2625,30 @@ Dec
 14
 </td>
 <td style="text-align:right;">
-83
+83 (69)
 </td>
 <td style="text-align:right;">
 0
+</td>
+</tr>
+<tr>
+<td style="text-align:right;">
+2021
+</td>
+<td style="text-align:left;">
+Dec
+</td>
+<td style="text-align:right;">
+66
+</td>
+<td style="text-align:right;">
+56
+</td>
+<td style="text-align:right;">
+10
+</td>
+<td style="text-align:right;">
+66 (56)
 </td>
 <td style="text-align:right;">
 0
@@ -2672,10 +2671,7 @@ Mar
 8
 </td>
 <td style="text-align:right;">
-40
-</td>
-<td style="text-align:right;">
-0
+40 (32)
 </td>
 <td style="text-align:right;">
 0
@@ -2684,32 +2680,6 @@ Mar
 <tr>
 <td style="text-align:right;">
 2022
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-66
-</td>
-<td style="text-align:right;">
-56
-</td>
-<td style="text-align:right;">
-10
-</td>
-<td style="text-align:right;">
-66
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2023
 </td>
 <td style="text-align:left;">
 Dec
@@ -2724,10 +2694,7 @@ Dec
 11
 </td>
 <td style="text-align:right;">
-73
-</td>
-<td style="text-align:right;">
-0
+73 (62)
 </td>
 <td style="text-align:right;">
 0
@@ -2735,7 +2702,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2024
+2023
 </td>
 <td style="text-align:left;">
 Nov
@@ -2750,10 +2717,7 @@ Nov
 9
 </td>
 <td style="text-align:right;">
-60
-</td>
-<td style="text-align:right;">
-0
+60 (51)
 </td>
 <td style="text-align:right;">
 0
@@ -2780,7 +2744,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -2855,7 +2819,7 @@ Apr
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -2863,7 +2827,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -2878,17 +2842,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+20
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+20
+</td>
+<td style="text-align:right;">
+20 (0)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -2906,10 +2890,7 @@ Mar
 3
 </td>
 <td style="text-align:right;">
-103
-</td>
-<td style="text-align:right;">
-0
+103 (100)
 </td>
 <td style="text-align:right;">
 0
@@ -2920,22 +2901,19 @@ Mar
 2018
 </td>
 <td style="text-align:left;">
-Nov
+Dec
 </td>
 <td style="text-align:right;">
-20
+65
 </td>
 <td style="text-align:right;">
-0
+64
 </td>
 <td style="text-align:right;">
-20
+1
 </td>
 <td style="text-align:right;">
-20
-</td>
-<td style="text-align:right;">
-0
+65 (64)
 </td>
 <td style="text-align:right;">
 0
@@ -2958,10 +2936,7 @@ May
 0
 </td>
 <td style="text-align:right;">
-100
-</td>
-<td style="text-align:right;">
-0
+100 (100)
 </td>
 <td style="text-align:right;">
 0
@@ -2970,32 +2945,6 @@ May
 <tr>
 <td style="text-align:right;">
 2019
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-65
-</td>
-<td style="text-align:right;">
-64
-</td>
-<td style="text-align:right;">
-1
-</td>
-<td style="text-align:right;">
-65
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2020
 </td>
 <td style="text-align:left;">
 Dec
@@ -3010,10 +2959,7 @@ Dec
 1
 </td>
 <td style="text-align:right;">
-147
-</td>
-<td style="text-align:right;">
-0
+147 (146)
 </td>
 <td style="text-align:right;">
 0
@@ -3036,10 +2982,7 @@ Mar
 0
 </td>
 <td style="text-align:right;">
-36
-</td>
-<td style="text-align:right;">
-0
+36 (36)
 </td>
 <td style="text-align:right;">
 0
@@ -3062,10 +3005,7 @@ Jan
 2
 </td>
 <td style="text-align:right;">
-112
-</td>
-<td style="text-align:right;">
-0
+112 (110)
 </td>
 <td style="text-align:right;">
 0
@@ -3073,7 +3013,7 @@ Jan
 </tr>
 <tr>
 <td style="text-align:right;">
-2024
+2023
 </td>
 <td style="text-align:left;">
 Dec
@@ -3088,10 +3028,7 @@ Dec
 80
 </td>
 <td style="text-align:right;">
-381
-</td>
-<td style="text-align:right;">
-0
+381 (301)
 </td>
 <td style="text-align:right;">
 0
@@ -3118,7 +3055,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3140,7 +3077,7 @@ Unknown
 <tbody>
 <tr>
 <td style="text-align:right;">
-2017
+2016
 </td>
 <td style="text-align:left;">
 Dec
@@ -3160,7 +3097,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2025
+2024
 </td>
 <td style="text-align:left;">
 Nov
@@ -3193,7 +3130,7 @@ Nov
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -3201,7 +3138,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3216,17 +3153,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+29
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+29
+</td>
+<td style="text-align:right;">
+29 (0)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -3244,10 +3201,7 @@ Mar
 2
 </td>
 <td style="text-align:right;">
-2
-</td>
-<td style="text-align:right;">
-0
+2 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -3256,32 +3210,6 @@ Mar
 <tr>
 <td style="text-align:right;">
 2018
-</td>
-<td style="text-align:left;">
-Nov
-</td>
-<td style="text-align:right;">
-29
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-29
-</td>
-<td style="text-align:right;">
-29
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -3296,10 +3224,7 @@ Dec
 7
 </td>
 <td style="text-align:right;">
-8
-</td>
-<td style="text-align:right;">
-0
+8 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3307,7 +3232,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2020
+2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -3322,10 +3247,7 @@ Dec
 8
 </td>
 <td style="text-align:right;">
-9
-</td>
-<td style="text-align:right;">
-0
+9 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3333,7 +3255,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2021
+2020
 </td>
 <td style="text-align:left;">
 Dec
@@ -3348,18 +3270,15 @@ Dec
 15
 </td>
 <td style="text-align:right;">
-18
+18 (3)
 </td>
 <td style="text-align:right;">
 1
 </td>
-<td style="text-align:right;">
-0
-</td>
 </tr>
 <tr>
 <td style="text-align:right;">
-2022
+2021
 </td>
 <td style="text-align:left;">
 Dec
@@ -3374,10 +3293,30 @@ Dec
 8
 </td>
 <td style="text-align:right;">
-10
+10 (2)
 </td>
 <td style="text-align:right;">
 0
+</td>
+</tr>
+<tr>
+<td style="text-align:right;">
+2022
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+1
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+1
+</td>
+<td style="text-align:right;">
+1 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -3394,42 +3333,13 @@ Nov
 1
 </td>
 <td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-1
-</td>
-<td style="text-align:right;">
 1
 </td>
 <td style="text-align:right;">
 0
 </td>
 <td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2024
-</td>
-<td style="text-align:left;">
-Nov
-</td>
-<td style="text-align:right;">
-1
-</td>
-<td style="text-align:right;">
-1
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-1
-</td>
-<td style="text-align:right;">
-0
+1 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3456,7 +3366,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3478,7 +3388,7 @@ Unknown
 <tbody>
 <tr>
 <td style="text-align:right;">
-2017
+2016
 </td>
 <td style="text-align:left;">
 Dec
@@ -3498,7 +3408,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2025
+2024
 </td>
 <td style="text-align:left;">
 Nov
@@ -3531,7 +3441,7 @@ Nov
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -3539,7 +3449,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3554,17 +3464,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+23
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+23
+</td>
+<td style="text-align:right;">
+23 (0)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -3582,10 +3512,7 @@ Mar
 18
 </td>
 <td style="text-align:right;">
-19
-</td>
-<td style="text-align:right;">
-0
+19 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3596,22 +3523,19 @@ Mar
 2018
 </td>
 <td style="text-align:left;">
-Nov
+Dec
 </td>
 <td style="text-align:right;">
-23
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-23
-</td>
-<td style="text-align:right;">
-23
+17
 </td>
 <td style="text-align:right;">
 0
+</td>
+<td style="text-align:right;">
+17
+</td>
+<td style="text-align:right;">
+17 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -3625,19 +3549,16 @@ Nov
 Dec
 </td>
 <td style="text-align:right;">
-17
+15
 </td>
 <td style="text-align:right;">
 0
 </td>
 <td style="text-align:right;">
-17
+15
 </td>
 <td style="text-align:right;">
-17
-</td>
-<td style="text-align:right;">
-0
+15 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -3646,32 +3567,6 @@ Dec
 <tr>
 <td style="text-align:right;">
 2020
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-15
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-15
-</td>
-<td style="text-align:right;">
-15
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2021
 </td>
 <td style="text-align:left;">
 Dec
@@ -3686,10 +3581,7 @@ Dec
 9
 </td>
 <td style="text-align:right;">
-10
-</td>
-<td style="text-align:right;">
-0
+10 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3712,10 +3604,7 @@ Feb
 11
 </td>
 <td style="text-align:right;">
-12
-</td>
-<td style="text-align:right;">
-0
+12 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -3723,7 +3612,7 @@ Feb
 </tr>
 <tr>
 <td style="text-align:right;">
-2023
+2022
 </td>
 <td style="text-align:left;">
 Nov
@@ -3738,10 +3627,7 @@ Nov
 0
 </td>
 <td style="text-align:right;">
-6
-</td>
-<td style="text-align:right;">
-0
+6 (6)
 </td>
 <td style="text-align:right;">
 0
@@ -3749,7 +3635,7 @@ Nov
 </tr>
 <tr>
 <td style="text-align:right;">
-2024
+2023
 </td>
 <td style="text-align:left;">
 Dec
@@ -3764,10 +3650,7 @@ Dec
 1
 </td>
 <td style="text-align:right;">
-4
-</td>
-<td style="text-align:right;">
-0
+4 (3)
 </td>
 <td style="text-align:right;">
 0
@@ -3794,7 +3677,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3869,7 +3752,7 @@ Mar
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -3877,7 +3760,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -3892,17 +3775,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Dec
+</td>
+<td style="text-align:right;">
+7
+</td>
+<td style="text-align:right;">
+4
+</td>
+<td style="text-align:right;">
+3
+</td>
+<td style="text-align:right;">
+7 (4)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -3920,10 +3823,7 @@ Mar
 8
 </td>
 <td style="text-align:right;">
-16
-</td>
-<td style="text-align:right;">
-0
+16 (8)
 </td>
 <td style="text-align:right;">
 0
@@ -3932,32 +3832,6 @@ Mar
 <tr>
 <td style="text-align:right;">
 2018
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-7
-</td>
-<td style="text-align:right;">
-4
-</td>
-<td style="text-align:right;">
-3
-</td>
-<td style="text-align:right;">
-7
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -3972,10 +3846,7 @@ Dec
 9
 </td>
 <td style="text-align:right;">
-34
-</td>
-<td style="text-align:right;">
-0
+34 (25)
 </td>
 <td style="text-align:right;">
 0
@@ -3983,7 +3854,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2020
+2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -3998,10 +3869,7 @@ Dec
 4
 </td>
 <td style="text-align:right;">
-115
-</td>
-<td style="text-align:right;">
-0
+115 (111)
 </td>
 <td style="text-align:right;">
 0
@@ -4009,7 +3877,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2023
+2022
 </td>
 <td style="text-align:left;">
 Dec
@@ -4024,10 +3892,7 @@ Dec
 108
 </td>
 <td style="text-align:right;">
-110
-</td>
-<td style="text-align:right;">
-0
+110 (2)
 </td>
 <td style="text-align:right;">
 0
@@ -4035,7 +3900,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2024
+2023
 </td>
 <td style="text-align:left;">
 Nov
@@ -4050,10 +3915,7 @@ Nov
 70
 </td>
 <td style="text-align:right;">
-78
-</td>
-<td style="text-align:right;">
-0
+78 (8)
 </td>
 <td style="text-align:right;">
 0
@@ -4080,7 +3942,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -4135,7 +3997,7 @@ Mar
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -4143,7 +4005,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -4158,17 +4020,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2017
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+20
+</td>
+<td style="text-align:right;">
+5
+</td>
+<td style="text-align:right;">
+15
+</td>
+<td style="text-align:right;">
+20 (5)
+</td>
+<td style="text-align:right;">
+0
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2018
@@ -4186,10 +4068,7 @@ Mar
 33
 </td>
 <td style="text-align:right;">
-36
-</td>
-<td style="text-align:right;">
-0
+36 (3)
 </td>
 <td style="text-align:right;">
 0
@@ -4198,32 +4077,6 @@ Mar
 <tr>
 <td style="text-align:right;">
 2018
-</td>
-<td style="text-align:left;">
-Nov
-</td>
-<td style="text-align:right;">
-20
-</td>
-<td style="text-align:right;">
-5
-</td>
-<td style="text-align:right;">
-15
-</td>
-<td style="text-align:right;">
-20
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -4238,10 +4091,7 @@ Dec
 0
 </td>
 <td style="text-align:right;">
-12
-</td>
-<td style="text-align:right;">
-0
+12 (12)
 </td>
 <td style="text-align:right;">
 0
@@ -4249,7 +4099,7 @@ Dec
 </tr>
 <tr>
 <td style="text-align:right;">
-2020
+2019
 </td>
 <td style="text-align:left;">
 Dec
@@ -4264,10 +4114,7 @@ Dec
 5
 </td>
 <td style="text-align:right;">
-82
-</td>
-<td style="text-align:right;">
-0
+82 (77)
 </td>
 <td style="text-align:right;">
 0
@@ -4290,10 +4137,7 @@ Feb
 6
 </td>
 <td style="text-align:right;">
-29
-</td>
-<td style="text-align:right;">
-0
+29 (23)
 </td>
 <td style="text-align:right;">
 0
@@ -4316,10 +4160,30 @@ Apr
 10
 </td>
 <td style="text-align:right;">
-61
+61 (51)
 </td>
 <td style="text-align:right;">
 0
+</td>
+</tr>
+<tr>
+<td style="text-align:right;">
+2021
+</td>
+<td style="text-align:left;">
+Dec
+</td>
+<td style="text-align:right;">
+65
+</td>
+<td style="text-align:right;">
+54
+</td>
+<td style="text-align:right;">
+11
+</td>
+<td style="text-align:right;">
+65 (54)
 </td>
 <td style="text-align:right;">
 0
@@ -4342,10 +4206,7 @@ Mar
 31
 </td>
 <td style="text-align:right;">
-77
-</td>
-<td style="text-align:right;">
-0
+77 (46)
 </td>
 <td style="text-align:right;">
 0
@@ -4354,32 +4215,6 @@ Mar
 <tr>
 <td style="text-align:right;">
 2022
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-65
-</td>
-<td style="text-align:right;">
-54
-</td>
-<td style="text-align:right;">
-11
-</td>
-<td style="text-align:right;">
-65
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2023
 </td>
 <td style="text-align:left;">
 Dec
@@ -4394,10 +4229,30 @@ Dec
 14
 </td>
 <td style="text-align:right;">
-106
+106 (92)
 </td>
 <td style="text-align:right;">
 0
+</td>
+</tr>
+<tr>
+<td style="text-align:right;">
+2023
+</td>
+<td style="text-align:left;">
+Dec
+</td>
+<td style="text-align:right;">
+72
+</td>
+<td style="text-align:right;">
+47
+</td>
+<td style="text-align:right;">
+25
+</td>
+<td style="text-align:right;">
+72 (47)
 </td>
 <td style="text-align:right;">
 0
@@ -4420,36 +4275,7 @@ Jan
 11
 </td>
 <td style="text-align:right;">
-24
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2024
-</td>
-<td style="text-align:left;">
-Dec
-</td>
-<td style="text-align:right;">
-72
-</td>
-<td style="text-align:right;">
-47
-</td>
-<td style="text-align:right;">
-25
-</td>
-<td style="text-align:right;">
-72
-</td>
-<td style="text-align:right;">
-0
+24 (13)
 </td>
 <td style="text-align:right;">
 0
@@ -4476,7 +4302,7 @@ Sex
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -4611,7 +4437,7 @@ Jan
 Tagging Status
 </div>
 </th>
-<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="3">
+<th style="border-bottom:hidden;padding-bottom:0; padding-left:3px;padding-right:3px;text-align: center; " colspan="2">
 <div style="border-bottom: 1px solid #ddd; padding-bottom: 5px; ">
 Disposition
 </div>
@@ -4619,7 +4445,7 @@ Disposition
 </tr>
 <tr>
 <th style="text-align:right;">
-FY
+Year
 </th>
 <th style="text-align:left;">
 Month
@@ -4634,17 +4460,37 @@ Newly Tagged
 Recaptured
 </th>
 <th style="text-align:right;">
-Released
+Released (Newly Tagged)
 </th>
 <th style="text-align:right;">
 Transferred
 </th>
-<th style="text-align:right;">
-Mortality
-</th>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align:right;">
+2013
+</td>
+<td style="text-align:left;">
+Nov
+</td>
+<td style="text-align:right;">
+203
+</td>
+<td style="text-align:right;">
+124
+</td>
+<td style="text-align:right;">
+79
+</td>
+<td style="text-align:right;">
+137 (58)
+</td>
+<td style="text-align:right;">
+66
+</td>
+</tr>
 <tr>
 <td style="text-align:right;">
 2014
@@ -4662,10 +4508,7 @@ Jan
 12
 </td>
 <td style="text-align:right;">
-13
-</td>
-<td style="text-align:right;">
-0
+13 (1)
 </td>
 <td style="text-align:right;">
 0
@@ -4688,36 +4531,7 @@ May
 66
 </td>
 <td style="text-align:right;">
-66
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2014
-</td>
-<td style="text-align:left;">
-Nov
-</td>
-<td style="text-align:right;">
-203
-</td>
-<td style="text-align:right;">
-124
-</td>
-<td style="text-align:right;">
-79
-</td>
-<td style="text-align:right;">
-137
-</td>
-<td style="text-align:right;">
-66
+66 (0)
 </td>
 <td style="text-align:right;">
 0
@@ -4740,10 +4554,7 @@ May
 17
 </td>
 <td style="text-align:right;">
-141
-</td>
-<td style="text-align:right;">
-0
+141 (124)
 </td>
 <td style="text-align:right;">
 0
@@ -4766,13 +4577,33 @@ May
 42
 </td>
 <td style="text-align:right;">
-97
+97 (56)
 </td>
 <td style="text-align:right;">
 0
 </td>
+</tr>
+<tr>
 <td style="text-align:right;">
-1
+2016
+</td>
+<td style="text-align:left;">
+Oct
+</td>
+<td style="text-align:right;">
+140
+</td>
+<td style="text-align:right;">
+126
+</td>
+<td style="text-align:right;">
+14
+</td>
+<td style="text-align:right;">
+140 (126)
+</td>
+<td style="text-align:right;">
+0
 </td>
 </tr>
 <tr>
@@ -4792,10 +4623,7 @@ May
 9
 </td>
 <td style="text-align:right;">
-19
-</td>
-<td style="text-align:right;">
-0
+19 (10)
 </td>
 <td style="text-align:right;">
 0
@@ -4804,32 +4632,6 @@ May
 <tr>
 <td style="text-align:right;">
 2017
-</td>
-<td style="text-align:left;">
-Oct
-</td>
-<td style="text-align:right;">
-140
-</td>
-<td style="text-align:right;">
-126
-</td>
-<td style="text-align:right;">
-14
-</td>
-<td style="text-align:right;">
-140
-</td>
-<td style="text-align:right;">
-0
-</td>
-<td style="text-align:right;">
-0
-</td>
-</tr>
-<tr>
-<td style="text-align:right;">
-2018
 </td>
 <td style="text-align:left;">
 Oct
@@ -4844,10 +4646,7 @@ Oct
 36
 </td>
 <td style="text-align:right;">
-131
-</td>
-<td style="text-align:right;">
-0
+131 (95)
 </td>
 <td style="text-align:right;">
 0
@@ -4855,7 +4654,7 @@ Oct
 </tr>
 <tr>
 <td style="text-align:right;">
-2019
+2018
 </td>
 <td style="text-align:left;">
 Oct
@@ -4870,10 +4669,7 @@ Oct
 23
 </td>
 <td style="text-align:right;">
-522
-</td>
-<td style="text-align:right;">
-0
+522 (499)
 </td>
 <td style="text-align:right;">
 0
@@ -4881,7 +4677,7 @@ Oct
 </tr>
 <tr>
 <td style="text-align:right;">
-2020
+2019
 </td>
 <td style="text-align:left;">
 Nov
@@ -4896,18 +4692,15 @@ Nov
 37
 </td>
 <td style="text-align:right;">
-9
+9 (0)
 </td>
 <td style="text-align:right;">
 80
 </td>
-<td style="text-align:right;">
-0
-</td>
 </tr>
 <tr>
 <td style="text-align:right;">
-2021
+2020
 </td>
 <td style="text-align:left;">
 Nov
@@ -4922,10 +4715,7 @@ Nov
 56
 </td>
 <td style="text-align:right;">
-342
-</td>
-<td style="text-align:right;">
-0
+342 (286)
 </td>
 <td style="text-align:right;">
 0
@@ -4933,7 +4723,7 @@ Nov
 </tr>
 <tr>
 <td style="text-align:right;">
-2022
+2021
 </td>
 <td style="text-align:left;">
 Oct
@@ -4948,10 +4738,7 @@ Oct
 40
 </td>
 <td style="text-align:right;">
-310
-</td>
-<td style="text-align:right;">
-0
+310 (270)
 </td>
 <td style="text-align:right;">
 0
@@ -4959,7 +4746,7 @@ Oct
 </tr>
 <tr>
 <td style="text-align:right;">
-2023
+2022
 </td>
 <td style="text-align:left;">
 Nov
@@ -4974,18 +4761,15 @@ Nov
 26
 </td>
 <td style="text-align:right;">
-311
+311 (294)
 </td>
 <td style="text-align:right;">
 17
 </td>
-<td style="text-align:right;">
-0
-</td>
 </tr>
 <tr>
 <td style="text-align:right;">
-2024
+2023
 </td>
 <td style="text-align:left;">
 Nov
@@ -5000,10 +4784,7 @@ Nov
 13
 </td>
 <td style="text-align:right;">
-286
-</td>
-<td style="text-align:right;">
-0
+286 (273)
 </td>
 <td style="text-align:right;">
 0
@@ -5011,7 +4792,7 @@ Nov
 </tr>
 <tr>
 <td style="text-align:right;">
-2025
+2024
 </td>
 <td style="text-align:left;">
 Oct
@@ -5026,18 +4807,15 @@ Oct
 28
 </td>
 <td style="text-align:right;">
-326
+326 (306)
 </td>
 <td style="text-align:right;">
 40
 </td>
-<td style="text-align:right;">
-0
-</td>
 </tr>
 <tr>
 <td style="text-align:right;">
-2026
+2025
 </td>
 <td style="text-align:left;">
 Oct
@@ -5052,13 +4830,10 @@ Oct
 25
 </td>
 <td style="text-align:right;">
-0
+0 (0)
 </td>
 <td style="text-align:right;">
 57
-</td>
-<td style="text-align:right;">
-0
 </td>
 </tr>
 </tbody>
