@@ -265,12 +265,12 @@ AprIPGIELSurvivorsSummary <- AprIPGIELSurvivors %>%
 
 pos <- position_dodge(width = 0.4)
 
-YumaOffSpringPlot <- ggplot(FebYumaCounts,
+YumaOffSpringPlot <- ggplot(FebYumaCounts %>% filter(StockingYear != 2020),
                             aes(x = as.factor(Year),
                                 y = PropOffspring,
                                 color = as.factor(StockingYear),
                                 group = as.factor(StockingYear))) +
-  geom_point(aes(size = Count), position = pos) +
+  geom_point(position = pos) +
   geom_line(position = pos) +
   geom_text(aes(label = Count),
             vjust = -0.6,
@@ -279,7 +279,7 @@ YumaOffSpringPlot <- ggplot(FebYumaCounts,
             show.legend = FALSE) +
   facet_wrap(~ StockingSex, ncol = 1) +
   scale_color_brewer(palette = "Dark2", name = "Stocking Year") +
-  scale_size(range = c(2, 8), name = "Survivor Count") +
+  scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Year",
     y = "Proportion Producing Offspring",
@@ -295,4 +295,40 @@ YumaOffSpringPlot <- ggplot(FebYumaCounts,
 
 png(paste0("output/YumaOffspringPlot.png"), width = 6, height = 4, units = 'in', res = 300)   
 YumaOffSpringPlot
+dev.off()
+
+YumaOffSpringPlot
+
+IPCA1OffSpringPlot <- ggplot(FebIPXYTECounts %>% filter(StockingYear == 2016, Year < 2023, Pond == "IPCA (Pond 1)"),
+                            aes(x = as.factor(Year),
+                                y = PropOffspring,
+                                color = as.factor(StockingYear),
+                                group = as.factor(StockingYear))) +
+  geom_point(position = pos) +
+  geom_line(position = pos) +
+  geom_text(aes(label = Count),
+            vjust = -0.6,
+            size = 2.5,
+            color = "black",
+            show.legend = FALSE) +
+  facet_wrap(~ StockingSex, ncol = 1) +
+  scale_color_brewer(palette = "Dark2", name = "Stocking Year") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Year",
+    y = "Proportion Producing Offspring",
+    title = "Offspring Production by Sex, Cohort, and Year",
+    subtitle = "Point size and labels indicate number of survivors (Count)"
+  ) +
+  theme_classic(base_size = 8) +
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+IPCA1OffSpringPlot
+
+png(paste0("output/IPCA1OffSpringPlot.png"), width = 6, height = 4, units = 'in', res = 300)   
+IPCA1OffSpringPlot
 dev.off()
