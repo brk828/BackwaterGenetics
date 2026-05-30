@@ -282,10 +282,7 @@ YumaOffSpringPlot <- ggplot(FebYumaCounts %>% filter(StockingYear != 2020),
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Year",
-    y = "Proportion Producing Offspring",
-    title = "Offspring Production by Sex, Cohort, and Year",
-    subtitle = "Point size and labels indicate number of survivors (Count)"
-  ) +
+    y = "Proportion") +
   theme_classic(base_size = 8) +
   theme(
     strip.background = element_rect(fill = "grey90"),
@@ -316,10 +313,7 @@ IPCA1OffSpringPlot <- ggplot(FebIPXYTECounts %>% filter(StockingYear == 2016, Ye
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Year",
-    y = "Proportion Producing Offspring",
-    title = "Offspring Production by Sex, Cohort, and Year",
-    subtitle = "Point size and labels indicate number of survivors (Count)"
-  ) +
+    y = "Proportion") +
   theme_classic(base_size = 8) +
   theme(
     strip.background = element_rect(fill = "grey90"),

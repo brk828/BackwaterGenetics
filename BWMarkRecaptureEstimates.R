@@ -10,14 +10,19 @@ packages(lubridate) # date and time manipulation
 packages(ggplot2) # Plotting
 packages(stringr) # string manipulations and function
 
-TotalCountIPXYTE <- TotalCountIPXYTE %>%
-  rename(Backwater = location)
+TotalCountIPXYTE <- TotalCountIPXYTE 
 
-TotalCountIPGIEL <- TotalCountIPGIEL %>%
-  rename(Backwater = location)
+TotalCountIPGIEL <- TotalCountIPGIEL 
 
 
 # Razorback sucker stocked in Winter, bonytail in spring. 
+
+
+# Rename backwater to simplified Genetics report format
+StudyBWContacts <- StudyBWContacts %>% 
+  mutate(Backwater = ifelse(str_detect(Backwater, "IPCA"), str_c(str_sub(Backwater, 1, 2), 
+                  str_sub(Backwater, -2, -2), 
+                  sep = " "), "YCB"))
 
 # Marks are restricted to January or February of the census year (month < 3)
 # tagging must have occurred at least six months prior to the first scannning month
@@ -90,15 +95,16 @@ BWEstimates <- BWMark %>%
   mutate(CensusDate = as.Date(paste0(CensusYear, "-01-01")))
 
 YumaEstimatePlot <- ggplot(BWEstimates %>%
-                             filter(Backwater == "Yuma Cove backwater"), 
+                             filter(Backwater == "YCB"), 
                            aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+               expand = expansion(add = c(30, 60))) +
   scale_y_continuous(limits = c(0, NA)) +
   labs(x = "Year", y = "Estimate") +
   theme_minimal() +
-  theme(axis.text = element_text(size = 11),
+  theme(axis.text = element_text(size = 9),
         axis.line = element_line(color = "black"),
         panel.grid.minor = element_blank()) +
   geom_line(data = TotalCountYuma,
@@ -109,15 +115,16 @@ YumaEstimatePlot <- ggplot(BWEstimates %>%
 YumaEstimatePlot
 
 IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
-                             filter(str_starts(Backwater, "IPCA"), Species == "XYTE"), 
+                             filter(str_starts(Backwater, "IP"), Species == "XYTE"), 
                            aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+               expand = expansion(add = c(30, 60))) +
   scale_y_continuous(limits = c(0, NA)) +
   labs(x = "Year", y = "Estimate") +
   theme_minimal() +
-  theme(axis.text = element_text(size = 11),
+  theme(axis.text = element_text(size = 9),
         axis.line = element_line(color = "black"),
         panel.grid.minor = element_blank()) +
   facet_wrap(~Backwater, nrow=3) +
@@ -128,15 +135,16 @@ IPXYTEEstimatePlot <- ggplot(BWEstimates %>%
 IPXYTEEstimatePlot
 
 IPGIELEstimatePlot <- ggplot(BWEstimates %>%
-                               filter(str_starts(Backwater, "IPCA"), Species == "GIEL"), 
+                               filter(str_starts(Backwater, "IP"), Species == "GIEL"), 
                              aes(x = CensusDate, y = Estimate)) +
   geom_point(shape = 21, fill = "steelblue", color = "black", size = 3, stroke = 0.5) +
   geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI), width = 10, color = "steelblue") +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+               expand = expansion(add = c(30, 60))) +
   scale_y_continuous(limits = c(0, NA)) +
   labs(x = "Year", y = "Estimate") +
   theme_minimal() +
-  theme(axis.text = element_text(size = 11),
+  theme(axis.text = element_text(size = 9),
         axis.line = element_line(color = "black"),
         panel.grid.minor = element_blank()) +
   facet_wrap(~Backwater, nrow=3) +

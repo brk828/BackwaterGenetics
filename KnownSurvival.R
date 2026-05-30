@@ -30,11 +30,11 @@ YumaMinReleaseDate <- as.Date(min(StudyBWYuma$first_date))
 IPXYTEMinReleaseDate <- as.Date(min(StudyBWXYTEIP$first_date))
 IPGIELMinReleaseDate <- as.Date(min(StudyBWGIELIP$first_date))
 
-SurvDaysYuma <- data.frame(Date = seq(YumaMinReleaseDate, Sys.Date() - SurvivalDAL*2,
+SurvDaysYuma <- data.frame(Date = seq(YumaMinReleaseDate, Sys.Date() - SurvivalDAL*4,
                                       by =  "day"))     
-SurvDaysXYTEIP <- data.frame(Date = seq(IPXYTEMinReleaseDate, Sys.Date() - SurvivalDAL*2, 
+SurvDaysXYTEIP <- data.frame(Date = seq(IPXYTEMinReleaseDate, Sys.Date() - SurvivalDAL*4, 
                                       by =  "day"))   
-SurvDaysGIELIP <- data.frame(Date = seq(IPGIELMinReleaseDate, Sys.Date() - SurvivalDAL*2, 
+SurvDaysGIELIP <- data.frame(Date = seq(IPGIELMinReleaseDate, Sys.Date() - SurvivalDAL*4, 
                                         by =  "day"))   
 # Create a crossdf of the days and the BW data, this duplicates all the rows of the 
 # study fish data for all dates in the SurvDays dataframe
@@ -85,7 +85,10 @@ SurvivorCountsIPXYTE <- expand_grid(
   left_join(KnownSurvivalIPXYTE %>%
       count(Date, sex, location, name = "Count"),
     by = c("Date", "sex", "location")) %>%
-  mutate(Count = replace_na(Count, 0))
+  mutate(Count = replace_na(Count, 0),
+         Backwater = str_c(str_sub(location, 1, 2), 
+                           str_sub(location, -2, -2), 
+                           sep = " "))
 
 KnownSurvivalIPGIEL <- CrossDFIPGIEL %>% 
   filter(first_date <= Date &
@@ -100,7 +103,10 @@ SurvivorCountsIPGIEL <- expand_grid(
   left_join(KnownSurvivalIPGIEL %>%
       count(Date, sex, location, name = "Count"),
     by = c("Date", "sex", "location")) %>%
-  mutate(Count = replace_na(Count, 0))
+  mutate(Count = replace_na(Count, 0),
+         Backwater = str_c(str_sub(location, 1, 2), 
+                           str_sub(location, -2, -2), 
+                           sep = " "))
 
 TotalCountYuma <- SurvivorCountsYuma %>%
   group_by(Date) %>%
@@ -109,13 +115,13 @@ TotalCountYuma <- SurvivorCountsYuma %>%
   ungroup()
 
 TotalCountIPXYTE <- SurvivorCountsIPXYTE %>%
-  group_by(Date, location) %>%
+  group_by(Date, location, Backwater) %>%
   summarise(Count = sum(Count, na.rm = TRUE)) %>%
   mutate(sex = "Total") %>%
   ungroup()
 
 TotalCountIPGIEL <- SurvivorCountsIPGIEL %>%
-  group_by(Date, location) %>%
+  group_by(Date, location, Backwater) %>%
   summarise(Count = sum(Count, na.rm = TRUE)) %>%
   mutate(sex = "Total") %>%
   ungroup()
@@ -135,14 +141,11 @@ KnownSurvivalPlotYuma <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 8),
+        ax is.text = element_text(size = 10),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
-  labs(x = "Date", y = "Count") +
-  geom_line(data = TotalCountYuma,
-            aes(x = Date, y = Count, color = sex, linetype = sex),
-            linewidth = 1.2, alpha = 0.4)
+  labs(x = "Date", y = "Count") 
 
 KnownSurvivalPlotIPXYTE <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)) +
   geom_line(aes(color = sex, linetype = sex)) +
@@ -150,15 +153,12 @@ KnownSurvivalPlotIPXYTE <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 8),
+        axis.text = element_text(size = 10),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
   labs(x = "Date", y = "Count") +
-  facet_wrap(~location, nrow=3) +
-  geom_line(data = TotalCountIPXYTE,
-            aes(x = Date, y = Count, color = sex, linetype = sex),
-            linewidth = 1.2, alpha = 0.4)
+  facet_wrap(~Backwater, nrow=3) 
 
 KnownSurvivalPlotIPGIEL <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)) +
   geom_line(aes(color = sex, linetype = sex)) +
@@ -166,19 +166,15 @@ KnownSurvivalPlotIPGIEL <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        axis.text = element_text(size = 8),
+        axis.text = element_text(size = 10),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
   labs(x = "Date", y = "Count") +
-  facet_wrap(~location, nrow=3) +
-  geom_line(data = TotalCountIPGIEL,
-            aes(x = Date, y = Count, color = sex, linetype = sex),
-            linewidth = 1.2, alpha = 0.4)
+  facet_wrap(~Backwater, nrow=3) 
 
 KnownSurvivalPlotIPGIEL
 
-# --- Overlay annotations: new fish additions (+) and harvested fish removals (-) ---
 # Additions: captured, tagged, and released back (newly entered tagged population)
 # Removals: previously tagged fish captured and retained (FirstRecord == "no" excludes fish
 #           tagged at the time of harvest, which were never part of the tagged population)
@@ -244,23 +240,6 @@ IPGIELRemovals <- StudyBWNFWG |>
   count(Date = collection_date, location, name = "n") |>
   mutate(label = paste0("-", n))
 
-KnownSurvivalPlotYuma <- KnownSurvivalPlotYuma +
-  geom_text(data = YumaAdditions, aes(x = Date, y = Inf, label = label),
-            vjust = 1.5, size = 2.5, color = "black", inherit.aes = FALSE) +
-  geom_text(data = YumaRemovals, aes(x = Date, y = Inf, label = label),
-            vjust = 3.5, size = 2.5, color = "red", inherit.aes = FALSE)
-
-KnownSurvivalPlotIPXYTE <- KnownSurvivalPlotIPXYTE +
-  geom_text(data = IPXYTEAdditions, aes(x = Date, y = Inf, label = label),
-            vjust = 1.5, size = 2.5, color = "black", inherit.aes = FALSE) +
-  geom_text(data = IPXYTERemovals, aes(x = Date, y = Inf, label = label),
-            vjust = 3.5, size = 2.5, color = "red", inherit.aes = FALSE)
-
-KnownSurvivalPlotIPGIEL <- KnownSurvivalPlotIPGIEL +
-  geom_text(data = IPGIELAdditions, aes(x = Date, y = Inf, label = label),
-            vjust = 1.5, size = 2.5, color = "black", inherit.aes = FALSE) +
-  geom_text(data = IPGIELRemovals, aes(x = Date, y = Inf, label = label),
-            vjust = 3.5, size = 2.5, color = "red", inherit.aes = FALSE)
 
 KnownSurvivalPlotYuma
 KnownSurvivalPlotIPXYTE
