@@ -1,0 +1,1392 @@
+---
+title: "Population Monitoring — Yuma Cove Backwater and Imperial Ponds"
+author: "B. Kesner"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    theme: cosmo
+  docx:
+    toc: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+
+
+```{r setup}
+#| label: setup
+#| include: false
+source("LabFunctions.R")
+packages(dplyr)
+packages(lubridate)
+packages(ggplot2)
+packages(stringr)
+packages(tidyr)
+packages(glmmTMB)
+packages(broom.mixed)
+packages(scales)
+load("data/ReportingData.RData")
+# Helper: save a plot as PNG and return it for inline display
+save_plot <- function(plot_obj, filename, width = 8, height = 5) {
+  ggsave(paste0("output/", filename), plot_obj,
+         width = width, height = height, units = "in", dpi = 300)
+  plot_obj
+}
+# Determine which IP ponds contain each species (do not hardcode)
+IPPondSpecies <- StudyBWAnalysis |>
+  filter(location_id > 1042 & location_id < 1049) |>
+  group_by(location, location_id, species) |>
+  summarise(n = n(), .groups = "drop") |>
+  slice_max(order_by = n, n = 1, by = location)  # dominant species per pond
+XYTEPonds <- IPPondSpecies |> filter(species == "XYTE") |> pull(location)
+GIELPonds <- IPPondSpecies |> filter(species == "GIEL") |> pull(location)
+# Abbreviated Backwater label (used in facets)
+bw_label <- function(loc) {
+  case_when(
+    str_detect(loc, "Yuma") ~ "Yuma Cove",
+    TRUE ~ str_c(str_sub(loc, 1, 2), str_sub(loc, -2, -2))
+  )
+}
+# Minimum sample size thresholds
+MIN_FISH_POP_MON <- 30   # minimum unique scanned fish to include population monitoring
+MIN_STOCKING_MODEL <- 10  # minimum fish with sex+TL for post-stocking survival model
+packages(kableExtra)
+# Helper: build a wide stocking x survival summary table (one row per group)
+build_stocking_table <- function(data, group_cols) {
+  all_sex <- c("F", "M", "U")
+  raw <- data |>
+    filter(event == "stocking") |>
+    mutate(sex = if_else(sex %in% all_sex, sex, "U")) |>
+    group_by(across(all_of(c(group_cols, "sex")))) |>
+    summarise(Stocked = n(), Surv = sum(Survived), .groups = "drop")
+  grp_df   <- raw |> distinct(across(all_of(group_cols)))
+  raw_full <- crossing(grp_df, sex = all_sex) |>
+    left_join(raw, by = c(group_cols, "sex")) |>
+    replace_na(list(Stocked = 0L, Surv = 0L))
+  stk_wide <- raw_full |>
+    pivot_wider(id_cols = all_of(group_cols), names_from = sex,
+                values_from = Stocked, names_prefix = "Stk_") |>
+    mutate(Stk_Total = Stk_F + Stk_M + Stk_U)
+  totals <- raw_full |>
+    group_by(across(all_of(group_cols))) |>
+    summarise(Tot_Stk = sum(Stocked), Tot_Surv = sum(Surv), .groups = "drop") |>
+    mutate(Srv_Total = if_else(Tot_Stk == 0L, "\u2014",
+                               paste0(Tot_Surv, " (",
+                                      round(Tot_Surv / Tot_Stk * 100), "%)")))
+  srv_wide <- raw_full |>
+    mutate(Srv_str = if_else(Stocked == 0L, "\u2014",
+                             paste0(Surv, " (", round(Surv / Stocked * 100), "%)"))) |>
+    pivot_wider(id_cols = all_of(group_cols), names_from = sex,
+                values_from = Srv_str, names_prefix = "Srv_")
+  stk_wide |>
+    left_join(srv_wide, by = group_cols) |>
+    left_join(totals |> select(all_of(c(group_cols, "Srv_Total"))), by = group_cols) |>
+    select(all_of(group_cols), Stk_F, Stk_M, Stk_U, Stk_Total,
+           Srv_F, Srv_M, Srv_U, Srv_Total)
+}
+```
+
+
+
+## Population Monitoring Methods
+
+
+
+Records for PIT-tagged Razorback Sucker (XYTE) and Bonytail (GIEL) stocked, captured, or remotely detected (PIT scanned) within Yuma Cove Backwater and Imperial Ponds California (IPCA 1–6) were filtered from the Lower Colorado River Native Fishes Database. Demographic parameters — including post-stocking survival, minimum known survivor counts, and annual population estimates — were estimated from these data. Untagged fish captured and released or transferred were not included. All analyses were performed in R (v`r R.version$major`.`r R.version$minor`) using the BackwaterGenetics R project available on GitHub.
+
+
+
+### Post-Stocking Survival
+
+
+
+Post-stocking survival was assessed using logistic regression implemented with the `glmmTMB` package. Sex and total length (TL, mm) at release were fixed independent predictors for all backwaters. For Yuma Cove backwater, release year was included as an additional fixed predictor to account for variation across stocking events (2013 and 2014 cohorts; 2015 was excluded due to absence of male contacts and 2020 was excluded due to missing sex data). For the IPCA razorback sucker ponds, all ponds were modeled together with pond (location) as a fixed predictor. IPCA bonytail ponds were modeled the same way, restricted to the 2017 initial stocking cohort due to insufficient sex data or post-release scanning windows in subsequent stockings. All models were additive (no interaction terms).
+
+
+
+Survival was treated as a binomial outcome: a fish was coded as a survivor (1) if it was detected by a PIT scanner at least once ≥`r SurvivalDAL` days after release; otherwise it was classified as dead (0).
+
+
+
+### Known Survivor Analysis
+
+
+
+PIT scanning data were used to track the minimum number of tagged fish alive in each backwater on any given date. A fish was included in the known survivor population for a given date if (1) it was tagged and released prior to that date and (2) it was detected on a PIT scanner at least once ≥`r SurvivalDAL` days after its release date. The date of the fish's last PIT detection served as the right-truncation point; after that date the fish was removed from the living population. This conservative approach ensures only fish that demonstrably survived the initial post-release period contribute to the known population trajectory. Fish with confirmed transfer records were excluded from known survivor analysis. Because a transferred fish ceases to be detected at the source backwater after its removal date, retaining it in the population trajectory would produce a decline indistinguishable from mortality. 
+
+
+
+### Population Estimates
+
+
+
+Annual population estimates for PIT-tagged adults were computed using the modified Petersen mark-recapture formula (Ricker 1975):
+
+
+
+$$\hat{N} = \frac{(M+1)(C+1)}{R+1}$$
+
+
+
+$$SE = \sqrt{\frac{(M+1)^2(C+1)(C-R)}{(R+2)(R+1)^2}}$$
+
+
+
+where M = number of marked individuals in the marking period, C = number of individuals captured (scanned) in the capture period, and R = number of marked individuals in the capture period. The marking period was January through February; the capture period was October through April. To be eligible for marking, a fish must have been tagged ≥6 months prior to the marking period. To be eligible for capture, a fish must have been tagged ≥15 months prior to the start of the capture period. Census years with R ≤ 3 were excluded. These criteria and the Peterson formula matched the standardized methods used for annual reporting to the LCR MSCP (Downey et al. 2025).
+
+
+
+### Reproductive Contribution
+
+
+
+Parentage assignment data provided by Dowling and Turner (this report) were used to assess the reproductive contributions of stocked adults. Known survivors present on February 15 of each year (February 1 for IPCA ponds) were linked to parentage records, and the proportion of survivors with detectable larval or juvenile recruit offspring was calculated by sex and stocking cohort. This analysis is currently available for Yuma Cove backwater (XYTE) and IPCA Pond 1 (XYTE only); other ponds lack sufficient parentage data and are not presented.
+
+
+
+---
+
+
+
+## Results and Discussion
+
+
+
+### Yuma Cove Backwater
+
+
+
+```{r yuma-data-check}
+YumaScan_n <- StudyBWContacts |>
+  filter(LID == 592) |>
+  summarise(n = n_distinct(PITIndex)) |>
+  pull(n)
+run_yuma <- YumaScan_n >= MIN_FISH_POP_MON
+```
+
+
+
+`r if (!run_yuma) paste0("*Population monitoring is not presented for Yuma Cove backwater due to insufficient scanning data (", YumaScan_n, " unique fish detected).*")`
+
+
+
+`r if (run_yuma) "Yuma Cove Backwater has been monitored for Razorback Sucker since 2013. Initial and supplemental stocking events, combined with continuous PIT scanning, allow assessment of post-stocking survival, long-term population trajectory, and annual population size."`
+
+
+
+#### Post-Stocking Survival
+
+
+
+```{r yuma-post-stocking}
+#| label: fig-yuma-survival
+#| fig-cap: "Predicted probability of detection ≥90 days post-release for Razorback Sucker stocked at Yuma Cove Backwater. Lines represent model predictions by sex; ribbons are 95% confidence intervals. Points are observed proportions by 10-mm size class."
+#| fig-width: 7
+#| fig-height: 5
+if (run_yuma) {
+  YumaStocking <- StudyBWAnalysis |>
+    filter(event == "stocking",
+           location_id == 592,
+           first_date < as.Date("2024-10-01"),
+           !release_year %in% c(2015, 2020)) |>
+    mutate(
+      ReleaseFY = as.factor(ifelse(month(first_date) > 9,
+                                   year(first_date) + 1,
+                                   year(first_date))),
+      sex = as.factor(trimws(sex)),
+      TLClass = as.integer(total_length * .1) * 10
+    ) |>
+    rename(ReleaseDate = first_date)
+  YumaReleaseFY <- unique(YumaStocking$ReleaseFY)
+  # Post-stocking survival summary for observed points
+  YumaSurvSummary <- YumaStocking |>
+    filter(sex %in% c("M", "F")) |>
+    group_by(ReleaseFY, sex, TLClass) |>
+    summarise(Released = n(), Survivors = sum(Survived),
+              ContactedProp = Survivors / Released, .groups = "drop") |>
+    filter(Released >= 5)
+  # Check model eligibility
+  model_data_yuma <- YumaStocking |> filter(sex %in% c("M", "F"))
+  yuma_model_ok <- nrow(model_data_yuma) >= MIN_STOCKING_MODEL &&
+    n_distinct(model_data_yuma$sex) > 1
+  if (yuma_model_ok) {
+    DALModelYuma <- glmmTMB(Survived ~ sex + total_length + ReleaseFY,
+                            family = binomial(link = "logit"),
+                            data = model_data_yuma)
+    PredictorsYuma <- expand.grid(
+      total_length = seq(350, 500, by = 10),
+      ReleaseFY = YumaReleaseFY,
+      sex = as.factor(c("M", "F"))
+    )
+    pred <- predict(DALModelYuma, newdata = PredictorsYuma,
+                    type = "response", se.fit = TRUE)
+    PredictedYuma <- PredictorsYuma |>
+      mutate(fit = pred$fit,
+             lowerCI = fit - 1.96 * pred$se.fit,
+             upperCI = fit + 1.96 * pred$se.fit)
+    p_yuma_survival <- ggplot(PredictedYuma |> filter(ReleaseFY != 2015),
+                              aes(x = total_length, y = fit, color = sex)) +
+      geom_ribbon(aes(ymin = lowerCI, ymax = upperCI, fill = sex),
+                  alpha = 0.2, color = NA) +
+      geom_line(linewidth = 1) +
+      geom_point(data = YumaSurvSummary |> filter(ReleaseFY != 2015,
+                                                   TLClass >= 350),
+                 aes(x = TLClass, y = ContactedProp), shape = 16, size = 2) +
+      facet_wrap(~ReleaseFY, nrow = 3) +
+      labs(x = "Total Length (mm)",
+           y = paste0("Detection Probability"),
+           color = "Sex", fill = "Sex") +
+      theme_minimal() +
+      theme(strip.text = element_text(face = "bold"))
+    save_plot(p_yuma_survival, "YumaCoveSurvival90DaysPostStocking.png",
+              width = 6, height = 4)
+    p_yuma_survival
+  } else {
+    cat("*Post-stocking survival model skipped: insufficient data.*")
+  }
+}
+```
+
+
+
+```{r yuma-survival-table}
+if (run_yuma && exists("DALModelYuma")) {
+  YumaResultsTable <- broom.mixed::tidy(DALModelYuma, effects = "fixed",
+                                        conf.int = TRUE) |>
+    mutate(
+      across(where(is.numeric), ~round(., 3)),
+      signif = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01  ~ "**",
+        p.value < 0.05  ~ "*",
+        p.value < 0.1   ~ ".",
+        TRUE            ~ ""
+      )
+    )
+  knitr::kable(YumaResultsTable |>
+                 select(term, estimate, std.error, conf.low, conf.high,
+                        statistic, p.value, signif),
+               caption = "Logistic regression results for Yuma Cove Backwater post-stocking survival.")
+}
+```
+
+
+
+Post-stocking survival for Razorback Sucker at Yuma Cove was influenced by sex, release total length, and release year. Females tended to be released at larger sizes on average than males, which, combined with the positive effect of length on survival, contributed to higher initial detection rates among females. The effect of size was most apparent across stocking years where the range of release TL was broad.
+
+```{r yuma-stocking-table}
+if (run_yuma) {
+  build_stocking_table(
+    StudyBWAnalysis |> filter(location_id == 592,
+                               release_year < year(Sys.Date()) - 1),
+    "release_year"
+  ) |>
+    knitr::kable(
+      col.names = c("Year", "F", "M", "U", "Total", "F", "M", "U", "Total"),
+      align     = c("c", rep("c", 8)),
+      caption   = "Razorback Sucker stocked and survived (≥90 DAL) at Yuma Cove Backwater by stocking year and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
+    ) |>
+    kable_styling(bootstrap_options = c("striped", "condensed"),
+                  full_width = FALSE, position = "left") |>
+    add_header_above(c(" " = 1, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+}
+```
+
+#### Known Survivors
+
+
+
+```{r yuma-known-survival}
+#| label: fig-yuma-known-survival
+#| fig-cap: "Minimum known survivors at Yuma Cove Backwater over time by sex. Lines represent male (M), female (F), and unknown sex (U). X-axis tick labels show year transitions only."
+#| fig-width: 8
+#| fig-height: 5
+if (run_yuma) {
+  # Rebuild survivor counts (from KnownSurvival.R logic)
+  YumaMinReleaseDate <- as.Date(min(KnownSurvivalYuma$first_date))
+  SurvDaysYuma <- data.frame(
+    Date = seq(YumaMinReleaseDate, Sys.Date() - SurvivalDAL * 4, by = "day")
+  )
+  SurvivorCountsYuma <- expand_grid(
+    Date = SurvDaysYuma$Date,
+    sex = unique(KnownSurvivalYuma$sex)
+  ) |>
+    left_join(KnownSurvivalYuma |> count(Date, sex, name = "Count"),
+              by = c("Date", "sex")) |>
+    mutate(Count = replace_na(Count, 0))
+  SurvivorCountsYuma$sex <- factor(SurvivorCountsYuma$sex,
+                                    levels = c("F", "M", "U"))
+  p_yuma_ks <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
+    geom_line(aes(color = sex, linetype = sex)) +
+    scale_x_date(date_breaks = "1 month",
+                 labels = function(x) ifelse(month(x) == 1,
+                                             format(x, "%Y"), "")) +
+    theme_minimal() +
+    theme(
+      axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(size = 10),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.line = element_line(color = "black")
+    ) +
+    labs(x = "Date", y = "Count", color = "Sex", linetype = "Sex")
+  save_plot(p_yuma_ks, "KnownSurvivalPlotYuma.png", width = 8, height = 5)
+  p_yuma_ks
+}
+```
+
+
+
+Known survivor counts at Yuma Cove peaked following the initial 2013 stocking and reflect the cumulative effect of multiple supplemental stocking events over subsequent years. Persistent differences in the number of surviving males versus females are consistent with the sex effect observed in the post-stocking survival model. The long-term decline in both sexes represents natural attrition in the absence of large-scale restocking.
+
+
+
+#### Population Estimates
+
+
+
+```{r yuma-estimates}
+#| label: fig-yuma-estimates
+#| fig-cap: "Annual modified Petersen mark-recapture population estimates (points with 95% CI error bars) for PIT-tagged Razorback Sucker at Yuma Cove Backwater. The shaded line shows the concurrent minimum known survivor count."
+#| fig-width: 6
+#| fig-height: 4
+if (run_yuma) {
+  # Rebuild mark-recapture estimates (BWMarkRecaptureEstimates.R logic)
+  StudyBWContacts_MCR <- StudyBWContacts |>
+    mutate(Backwater = ifelse(str_detect(Backwater, "IPCA"),
+                              str_c(str_sub(Backwater, 1, 2),
+                                    str_sub(Backwater, -2, -2)),
+                              "YCB"))
+  BWMarks <- StudyBWContacts_MCR |>
+    filter(!is.na(available_date),
+           Date >= available_date %m+% months(6),
+           month(Date) < 3) |>
+    mutate(CensusYear = year(Date)) |>
+    group_by(CensusYear, Species, Backwater, PITIndex, available_date) |>
+    summarise(Contacts = n(), .groups = "drop")
+  BWCaptures <- StudyBWContacts_MCR |>
+    filter(!is.na(available_date),
+           Date >= available_date %m+% months(15),
+           month(Date) > 9 | month(Date) < 5) |>
+    mutate(CensusYear = ScanFY - 1) |>
+    group_by(CensusYear, Species, Backwater, PITIndex, available_date) |>
+    summarise(Contacts = n(), .groups = "drop")
+  BWRecaptures <- BWMarks |>
+    select(Backwater, Species, CensusYear, PITIndex) |>
+    inner_join(BWCaptures |> select(Backwater, Species, CensusYear, PITIndex),
+               by = c("Backwater", "Species", "CensusYear", "PITIndex"))
+  BWEstimates <- BWMarks |>
+    group_by(Backwater, Species, CensusYear) |>
+    summarise(M = n_distinct(PITIndex), .groups = "drop") |>
+    inner_join(
+      BWCaptures |> group_by(Backwater, Species, CensusYear) |>
+        summarise(C = n_distinct(PITIndex), .groups = "drop"),
+      by = c("Backwater", "Species", "CensusYear")
+    ) |>
+    inner_join(
+      BWRecaptures |> group_by(Backwater, Species, CensusYear) |>
+        summarise(R = n_distinct(PITIndex), .groups = "drop"),
+      by = c("Backwater", "Species", "CensusYear")
+    ) |>
+    filter(R > 3) |>
+    mutate(
+      LowerBoundR  = qpois(0.025, R),
+      UpperBoundR  = qpois(0.975, R),
+      Estimate     = as.integer(((M + 1) * (C + 1)) / (R + 1)),
+      LowerQP95CI  = as.integer(((M + 1) * (C + 1)) / (UpperBoundR + 1)),
+      UpperQP95CI  = as.integer(((M + 1) * (C + 1)) / (LowerBoundR + 1)),
+      SE           = as.integer(sqrt(((M+1)^2*(C+1)*(C-R)) / ((R+2)*(R+1)^2))),
+      LowerN95CI   = as.integer(Estimate - 1.96 * SE),
+      UpperN95CI   = as.integer(Estimate + 1.96 * SE),
+      CensusDate   = as.Date(paste0(CensusYear, "-01-01"))
+    ) |>
+    na.omit()
+  p_yuma_est <- ggplot(BWEstimates |> filter(Backwater == "YCB"),
+                       aes(x = CensusDate, y = Estimate)) +
+    geom_line(data = TotalCountYuma,
+              aes(x = Date, y = Count),
+              linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
+    geom_point(shape = 21, fill = "steelblue", color = "black",
+               size = 3, stroke = 0.5) +
+    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+                  width = 10, color = "steelblue") +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+                 expand = expansion(add = c(30, 60))) +
+    scale_y_continuous(limits = c(0, NA)) +
+    labs(x = "Year", y = "Estimate") +
+    theme_minimal() +
+    theme(axis.text = element_text(size = 9),
+          axis.line = element_line(color = "black"),
+          panel.grid.minor = element_blank())
+  save_plot(p_yuma_est, "YumaEstimatePlot.png", width = 6, height = 4)
+  p_yuma_est
+}
+```
+
+
+
+Annual population estimates for PIT-tagged Razorback Sucker at Yuma Cove closely track the minimum known survivor trajectory, providing mutual validation between the two methods. Estimates with wide confidence intervals reflect census years with low recapture rates and should be interpreted cautiously.
+
+
+
+#### Reproductive Contribution
+
+
+
+```{r yuma-offspring}
+#| label: fig-yuma-offspring
+#| fig-cap: "Proportion of known surviving Razorback Sucker at Yuma Cove Backwater with detectable larval or juvenile recruit offspring (from Dowling and Turner parentage data), by sex and year. Numbers on points show sample size (known survivors). Lines connect cohorts tracked across years."
+#| fig-width: 6
+#| fig-height: 5
+if (run_yuma) {
+  packages(readxl)
+  YumaLarvalMoms <- read.csv("data/Yuma_larvae_mothers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Larvae = offspring_count) |>
+    select(Year, PIT, Larvae) |>
+    mutate(GSex = "F", PIT = toupper(PIT))
+  YumaLarvalDads <- read.csv("data/Yuma_larvae_fathers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Larvae = offspring_count) |>
+    select(Year, PIT, Larvae) |>
+    mutate(GSex = "M", PIT = toupper(PIT))
+  YumaRecruitsMoms <- read.csv("data/Yuma_recruits_mothers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Recruits = offspring_count) |>
+    select(Year, PIT, Recruits) |>
+    mutate(GSex = "F", PIT = toupper(PIT))
+  YumaRecruitsDads <- read.csv("data/Yuma_recruits_fathers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Recruits = offspring_count) |>
+    select(Year, PIT, Recruits) |>
+    mutate(GSex = "M", PIT = toupper(PIT))
+  YumaOffspring <- full_join(
+    rbind(YumaLarvalMoms, YumaLarvalDads),
+    rbind(YumaRecruitsMoms, YumaRecruitsDads),
+    by = c("Year", "PIT"),
+    suffix = c("_Larvae", "_Recruits")
+  ) |>
+    mutate(
+      Recruits = no_na_df(Recruits),
+      Larvae   = no_na_df(Larvae),
+      GSex = case_when(
+        is.na(GSex_Recruits) ~ GSex_Larvae,
+        is.na(GSex_Larvae)   ~ GSex_Recruits,
+        GSex_Recruits == GSex_Larvae ~ GSex_Recruits,
+        TRUE ~ "U"
+      )
+    ) |>
+    select(-GSex_Recruits, -GSex_Larvae)
+  YumaStockings_gen <- StudyBWAnalysis |>
+    filter(event == "stocking", location_id == 592, release_year < 2025) |>
+    select(Species = species, PITIndex, StockingYear = release_year,
+           StockingMonth = release_month, StockingSex = sex,
+           StockingTL = total_length, Survived, MaxDAL)
+  FebYumaSurvivors <- KnownSurvivalYuma |>
+    filter(month(Date) == 2, day(Date) == 15) |>
+    mutate(Year = year(Date), TagYear = year(first_date)) |>
+    filter(Year != TagYear) |>
+    select(PITIndex, Year) |>
+    left_join(YumaStockings_gen, by = "PITIndex") |>
+    filter(!is.na(StockingYear)) |>
+    rbind(YumaStockings_gen |> mutate(Year = StockingYear)) |>
+    left_join(YumaOffspring |> select(-GSex), by = c("PITIndex" = "PIT", "Year")) |>
+    mutate(Recruits = no_na_df(Recruits), Larvae = no_na_df(Larvae),
+           Offspring = Recruits + Larvae)
+  FebYumaCounts <- FebYumaSurvivors |>
+    group_by(StockingSex, StockingYear, Year) |>
+    summarise(Count = n(),
+              LarvaePos   = sum(Larvae > 0),
+              RecruitsPos = sum(Recruits > 0),
+              Offspring   = sum(Offspring > 0),
+              .groups = "drop") |>
+    mutate(PropOffspring = round(Offspring / Count, 3))
+  pos <- position_dodge(width = 0.4)
+  p_yuma_offspring <- ggplot(
+    FebYumaCounts |> filter(StockingYear != 2020),
+    aes(x = as.factor(Year), y = PropOffspring,
+        color = as.factor(StockingYear),
+        group = as.factor(StockingYear))
+  ) +
+    geom_point(position = pos) +
+    geom_line(position = pos) +
+    geom_text(aes(label = Count), vjust = -0.6, size = 2.5,
+              color = "black", show.legend = FALSE, position = pos) +
+    facet_wrap(~StockingSex, ncol = 1) +
+    scale_color_brewer(palette = "Dark2", name = "Stocking Year") +
+    scale_y_continuous(limits = c(0, 1)) +
+    labs(x = "Year", y = "Proportion") +
+    theme_classic(base_size = 8) +
+    theme(
+      strip.background = element_rect(fill = "grey90"),
+      strip.text = element_text(face = "bold"),
+      legend.position = "right"
+    )
+  save_plot(p_yuma_offspring, "YumaOffspringPlot.png", width = 6, height = 4)
+  p_yuma_offspring
+}
+```
+
+
+
+The proportion of known survivors with detectable offspring varied by sex and stocking year, with some cohorts contributing consistently across multiple reproductive seasons and others declining to zero contribution within a few years. Smaller sample sizes in later years reflect the natural attrition of the stocked cohort and limit interpretation.
+
+
+
+---
+
+
+
+### Imperial Ponds — Razorback Sucker
+
+
+
+```{r ip-xyte-intro}
+IPXYTEScan_n <- StudyBWContacts |>
+  filter(LID > 1042 & LID < 1049, Species == "XYTE") |>
+  summarise(n = n_distinct(PITIndex)) |>
+  pull(n)
+run_ip_xyte <- IPXYTEScan_n >= MIN_FISH_POP_MON
+```
+
+
+
+`r paste0("IPCA ponds with Razorback Sucker (", paste(XYTEPonds, collapse = ", "), ") have been monitored since initial stocking in fiscal year 2017. ")`
+
+`r if (!run_ip_xyte) paste0("*Population monitoring is not presented due to insufficient scanning data (", IPXYTEScan_n, " unique fish detected).*")`
+
+
+
+`r if (run_ip_xyte) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below for XYTE ponds collectively and by individual pond. Parentage-based reproductive contribution is available for IPCA Pond 1 only."`
+
+
+
+#### Post-Stocking Survival
+
+
+
+```{r ip-xyte-survival}
+#| label: fig-ip-xyte-survival
+#| fig-cap: "Predicted probability of detection ≥90 days post-release for Razorback Sucker stocked at IPCA ponds. Lines and ribbons as in Figure 1. All XYTE ponds were modeled together with pond as a fixed predictor."
+#| fig-width: 7
+#| fig-height: 7
+if (run_ip_xyte) {
+  IPXYTEStocking <- StudyBWAnalysis |>
+    filter(location_id != 592, species == "XYTE",
+           event == "stocking",
+           first_date < as.Date("2024-10-01")) |>
+    mutate(
+      ReleaseFY = as.factor(ifelse(month(first_date) > 9,
+                                   year(first_date) + 1,
+                                   year(first_date))),
+      sex       = as.factor(trimws(sex)),
+      location  = as.factor(location),
+      TLClass   = as.integer(total_length * .1) * 10
+    )
+  IPXYTELocations <- levels(IPXYTEStocking$location)
+  IPXYTESurvSummary <- IPXYTEStocking |>
+    group_by(location, ReleaseFY, sex, TLClass) |>
+    summarise(Released = n(), Survivors = sum(Survived),
+              ContactedProp = Survivors / Released, .groups = "drop") |>
+    filter(Released >= 5)
+  model_data_ipxyte <- IPXYTEStocking |> filter(sex %in% c("M", "F"))
+  ipxyte_model_ok <- nrow(model_data_ipxyte) >= MIN_STOCKING_MODEL &&
+    n_distinct(model_data_ipxyte$sex) > 1
+  if (ipxyte_model_ok) {
+    DALModelIPXYTE <- glmmTMB(Survived ~ sex + total_length + location,
+                              family = binomial(link = "logit"),
+                              data = model_data_ipxyte)
+    PredictorsIPXYTE <- expand.grid(
+      total_length = seq(350, 500, by = 10),
+      location     = IPXYTELocations,
+      sex          = as.factor(c("M", "F"))
+    )
+    pred_xyte <- predict(DALModelIPXYTE, newdata = PredictorsIPXYTE,
+                         type = "response", se.fit = TRUE)
+    PredictedIPXYTE <- PredictorsIPXYTE |>
+      mutate(fit = pred_xyte$fit,
+             lowerCI = fit - 1.96 * pred_xyte$se.fit,
+             upperCI = fit + 1.96 * pred_xyte$se.fit,
+             Backwater = bw_label(as.character(location)))
+    IPXYTESurvSummary <- IPXYTESurvSummary |>
+      mutate(Backwater = bw_label(as.character(location)))
+    p_ipxyte_survival <- ggplot(PredictedIPXYTE,
+                                aes(x = total_length, y = fit, color = sex)) +
+      geom_ribbon(aes(ymin = lowerCI, ymax = upperCI, fill = sex),
+                  alpha = 0.2, color = NA) +
+      geom_line(linewidth = 1) +
+      geom_point(data = IPXYTESurvSummary |> filter(TLClass >= 350,
+                                                      sex %in% c("M","F")),
+                 aes(x = TLClass, y = ContactedProp), shape = 16, size = 2) +
+      facet_wrap(~Backwater, nrow = 3) +
+      labs(x = "Total Length (mm)",
+           y = paste0("Detection Probability"),
+           color = "Sex", fill = "Sex") +
+      theme_minimal() +
+      theme(strip.text = element_text(face = "bold"))
+    save_plot(p_ipxyte_survival, "IPXYTESurvival90DaysPostStocking.png",
+              width = 6, height = 4)
+    p_ipxyte_survival
+  } else {
+    cat("*Post-stocking survival model for IP XYTE ponds skipped: insufficient data.*")
+  }
+}
+```
+
+
+
+```{r ip-xyte-survival-table}
+if (run_ip_xyte && exists("DALModelIPXYTE")) {
+  IPXYTEResultsTable <- broom.mixed::tidy(DALModelIPXYTE, effects = "fixed",
+                                          conf.int = TRUE) |>
+    mutate(
+      across(where(is.numeric), ~round(., 3)),
+      signif = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01  ~ "**",
+        p.value < 0.05  ~ "*",
+        p.value < 0.1   ~ ".",
+        TRUE            ~ ""
+      )
+    )
+  knitr::kable(IPXYTEResultsTable |>
+                 select(term, estimate, std.error, conf.low, conf.high,
+                        statistic, p.value, signif),
+               caption = "Logistic regression results for IPCA Razorback Sucker post-stocking survival.")
+}
+```
+
+
+
+Similar to Yuma Cove, post-stocking survival for Razorback Sucker at IPCA ponds was influenced by sex and release size. Release size discrepancies between sexes were consistent with the patterns observed at Yuma Cove, and survival differences between ponds can partially be attributed to variation in scanner coverage and stocking timing.
+
+```{r ip-xyte-stocking-table}
+if (run_ip_xyte) {
+  build_stocking_table(
+    StudyBWAnalysis |> filter(location %in% XYTEPonds, location_id > 1042,
+                               release_year < year(Sys.Date()) - 1),
+    c("location", "release_year")
+  ) |>
+    mutate(location = bw_label(location)) |>
+    arrange(location, release_year) |>
+    knitr::kable(
+      col.names = c("Pond", "Year", "F", "M", "U", "Total", "F", "M", "U", "Total"),
+      align     = c("l", "c", rep("c", 8)),
+      caption   = "Razorback Sucker stocked and survived (≥90 DAL) at IPCA ponds by pond, stocking year, and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
+    ) |>
+    kable_styling(bootstrap_options = c("striped", "condensed"),
+                  full_width = FALSE, position = "left") |>
+    add_header_above(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+}
+```
+
+#### Known Survivors
+
+
+
+```{r ip-xyte-known-survival}
+#| label: fig-ip-xyte-known-survival
+#| fig-cap: "Minimum known survivors over time for Razorback Sucker at IPCA ponds, by sex. Each panel represents one pond. X-axis tick labels show year transitions only."
+#| fig-width: 8
+#| fig-height: 7
+if (run_ip_xyte) {
+  SurvivorCountsIPXYTE <- expand_grid(
+    Date     = unique(KnownSurvivalIPXYTE$Date),
+    sex      = unique(KnownSurvivalIPXYTE$sex),
+    location = unique(KnownSurvivalIPXYTE$location)
+  ) |>
+    left_join(KnownSurvivalIPXYTE |>
+                count(Date, sex, location, name = "Count"),
+              by = c("Date", "sex", "location")) |>
+    mutate(Count = replace_na(Count, 0),
+           Backwater = bw_label(location))
+  SurvivorCountsIPXYTE$sex <- factor(SurvivorCountsIPXYTE$sex,
+                                      levels = c("F", "M", "U"))
+  p_ipxyte_ks <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)) +
+    geom_line(aes(color = sex, linetype = sex)) +
+    scale_x_date(date_breaks = "1 month",
+                 labels = function(x) ifelse(month(x) == 1,
+                                             format(x, "%Y"), "")) +
+    facet_wrap(~Backwater, nrow = 3) +
+    theme_minimal() +
+    theme(
+      axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(size = 9),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.line = element_line(color = "black"),
+      strip.text = element_text(face = "bold")
+    ) +
+    labs(x = "Date", y = "Count", color = "Sex", linetype = "Sex")
+  save_plot(p_ipxyte_ks, "KnownSurvivalPlotIPXYTE.png", width = 8, height = 7)
+  p_ipxyte_ks
+}
+```
+
+
+
+Known survivor counts for IPCA Razorback Sucker ponds reflect the timing and magnitude of each stocking event. Supplemental stockings are visible as step increases in the sex-specific survivor counts. The rate of subsequent decline provides a qualitative indicator of post-stocking attrition between monitoring events.
+
+
+
+#### Population Estimates
+
+
+
+```{r ip-xyte-estimates}
+#| label: fig-ip-xyte-estimates
+#| fig-cap: "Annual modified Petersen population estimates for PIT-tagged Razorback Sucker at each IPCA pond. Points with 95% CI; shaded line shows concurrent minimum known survivor count."
+#| fig-width: 8
+#| fig-height: 7
+if (run_ip_xyte && exists("BWEstimates")) {
+  p_ipxyte_est <- ggplot(
+    BWEstimates |> filter(str_starts(Backwater, "IP"), Species == "XYTE"),
+    aes(x = CensusDate, y = Estimate)
+  ) +
+    geom_line(data = TotalCountIPXYTE,
+              aes(x = Date, y = Count, group = Backwater),
+              linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
+    geom_point(shape = 21, fill = "steelblue", color = "black",
+               size = 3, stroke = 0.5) +
+    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+                  width = 10, color = "steelblue") +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+                 expand = expansion(add = c(30, 60))) +
+    scale_y_continuous(limits = c(0, NA)) +
+    labs(x = "Year", y = "Estimate") +
+    facet_wrap(~Backwater, nrow = 3) +
+    theme_minimal() +
+    theme(axis.text = element_text(size = 9),
+          axis.line = element_line(color = "black"),
+          panel.grid.minor = element_blank(),
+          strip.text = element_text(face = "bold"))
+  save_plot(p_ipxyte_est, "IPXYTEEstimatePlot.png", width = 8, height = 7)
+  p_ipxyte_est
+}
+```
+
+
+
+Annual estimates for individual IPCA Razorback Sucker ponds show the expected pattern of decline from initial stocking, with the known survivor count providing an independent lower-bound check. In ponds where estimates were not computable (R ≤ 3), the known survivor trajectory is the primary indicator of population size.
+
+
+
+#### Reproductive Contribution — IPCA Pond 1
+
+
+
+```{r ip-pond1-offspring}
+#| label: fig-ip-pond1-offspring
+#| fig-cap: "Proportion of known surviving Razorback Sucker at IPCA Pond 1 with detectable larval or juvenile recruit offspring, by sex and year. Numbers show known survivor sample size. Parentage data for other IPCA XYTE ponds are not yet available."
+#| fig-width: 6
+#| fig-height: 4
+if (run_ip_xyte) {
+  packages(readxl)
+  IPLarvalMoms <- read.csv("data/IP_larvae_mothers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Larvae = offspring_count) |>
+    select(Year, PIT, Larvae) |>
+    mutate(GSex = "F", PIT = toupper(PIT))
+  IPLarvalDads <- read.csv("data/IP_larvae_fathers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Larvae = offspring_count) |>
+    select(Year, PIT, Larvae) |>
+    mutate(GSex = "M", PIT = toupper(PIT))
+  IPRecruitsMoms <- read.csv("data/IP_recruits_mothers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Recruits = offspring_count) |>
+    select(Year, PIT, Recruits) |>
+    mutate(GSex = "F", PIT = toupper(PIT))
+  IPRecruitsDads <- read.csv("data/IP_recruits_fathers_repro_counts_PIT.csv") |>
+    rename(PIT = PIT.TAG, Recruits = offspring_count) |>
+    select(Year, PIT, Recruits) |>
+    mutate(GSex = "M", PIT = toupper(PIT))
+  IPOffspring <- full_join(
+    rbind(IPLarvalMoms, IPLarvalDads),
+    rbind(IPRecruitsMoms, IPRecruitsDads),
+    by = c("Year", "PIT"),
+    suffix = c("_Larvae", "_Recruits")
+  ) |>
+    mutate(
+      Recruits = no_na_df(Recruits),
+      Larvae   = no_na_df(Larvae),
+      GSex = case_when(
+        is.na(GSex_Recruits) ~ GSex_Larvae,
+        is.na(GSex_Larvae)   ~ GSex_Recruits,
+        GSex_Recruits == GSex_Larvae ~ GSex_Recruits,
+        TRUE ~ "U"
+      )
+    ) |>
+    select(-GSex_Recruits, -GSex_Larvae)
+  IPXYTEStockings_gen <- StudyBWAnalysis |>
+    filter(event == "stocking", species == "XYTE",
+           str_starts(location, "IPCA"), release_year < 2025) |>
+    select(Pond = location, Species = species, PITIndex,
+           StockingYear = release_year, StockingMonth = release_month,
+           StockingSex = sex, StockingTL = total_length, Survived, MaxDAL)
+  FebIPXYTESurvivors <- KnownSurvivalIPXYTE |>
+    filter(month(Date) == 2, day(Date) == 1) |>
+    mutate(Year = year(Date), Pond = location,
+           TagYear = year(first_date)) |>
+    filter(Year != TagYear) |>
+    select(Pond, PITIndex, Year) |>
+    left_join(IPXYTEStockings_gen, by = c("PITIndex", "Pond")) |>
+    filter(!is.na(StockingYear)) |>
+    rbind(IPXYTEStockings_gen |> mutate(Year = StockingYear)) |>
+    left_join(IPOffspring |> select(-GSex),
+              by = c("PITIndex" = "PIT", "Year")) |>
+    mutate(Recruits = no_na_df(Recruits), Larvae = no_na_df(Larvae),
+           Offspring = Recruits + Larvae)
+  # Check if Pond 1 has offspring data
+  Pond1Offspring <- FebIPXYTESurvivors |>
+    filter(Pond == "IPCA (Pond 1)", Offspring > 0)
+  if (nrow(Pond1Offspring) > 0) {
+    FebIPXYTECounts <- FebIPXYTESurvivors |>
+      filter(Pond == "IPCA (Pond 1)", StockingYear == 2016, Year < 2023) |>
+      group_by(StockingSex, StockingYear, Year) |>
+      summarise(Count = n(),
+                Offspring = sum(Offspring > 0),
+                .groups = "drop") |>
+      mutate(PropOffspring = round(Offspring / Count, 3))
+    pos <- position_dodge(width = 0.4)
+    p_pond1_offspring <- ggplot(
+      FebIPXYTECounts,
+      aes(x = as.factor(Year), y = PropOffspring,
+          color = as.factor(StockingYear),
+          group = as.factor(StockingYear))
+    ) +
+      geom_point(position = pos) +
+      geom_line(position = pos) +
+      geom_text(aes(label = Count), vjust = -0.6, size = 2.5,
+                color = "black", show.legend = FALSE, position = pos) +
+      facet_wrap(~StockingSex, ncol = 1) +
+      scale_color_brewer(palette = "Dark2", name = "Stocking Year") +
+      scale_y_continuous(limits = c(0, 1)) +
+      labs(x = "Year", y = "Proportion") +
+      theme_classic(base_size = 8) +
+      theme(
+        strip.background = element_rect(fill = "grey90"),
+        strip.text = element_text(face = "bold"),
+        legend.position = "right"
+      )
+    save_plot(p_pond1_offspring, "IPCA1OffSpringPlot.png", width = 6, height = 4)
+    p_pond1_offspring
+  } else {
+    cat("*Parentage data for IPCA Pond 1 are not yet available or contain no matches. Reproductive contribution analysis skipped.*")
+  }
+}
+```
+
+
+
+Reproductive contribution data for IPCA Pond 1 follow a similar pattern to Yuma Cove, with a subset of the surviving stocked population accounting for detected offspring in any given year. Parentage data for IPCA Ponds 2 and 3 are not currently available; that analysis will be added when data are provided by Dowling and Turner.
+
+
+
+---
+
+
+
+### Imperial Ponds — Bonytail
+
+
+
+```{r ip-giel-intro}
+IPGIELScan_n <- StudyBWContacts |>
+  filter(LID > 1042 & LID < 1049, Species == "GIEL") |>
+  summarise(n = n_distinct(PITIndex)) |>
+  pull(n)
+run_ip_giel <- IPGIELScan_n >= MIN_FISH_POP_MON
+```
+
+
+
+`r paste0("IPCA ponds with Bonytail (", paste(GIELPonds, collapse = ", "), ") were initially stocked in fiscal year 2017. ")`
+
+`r if (!run_ip_giel) paste0("*Population monitoring is not presented due to insufficient scanning data (", IPGIELScan_n, " unique fish detected).*")`
+
+
+
+`r if (run_ip_giel) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below. No parentage data are currently available for Bonytail; the reproductive contribution analysis is not included."`
+
+
+
+#### Post-Stocking Survival
+
+
+
+```{r ip-giel-survival}
+#| label: fig-ip-giel-survival
+#| fig-cap: "Predicted probability of detection ≥90 days post-release for Bonytail stocked at IPCA ponds (2017 initial stocking cohort). Lines and ribbons as in Figure 1."
+#| fig-width: 7
+#| fig-height: 7
+if (run_ip_giel) {
+  IPGIEL2017Stocking <- StudyBWAnalysis |>
+    filter(location_id != 592, species == "GIEL",
+           event == "stocking",
+           ifelse(month(first_date) > 9,
+                  year(first_date) + 1,
+                  year(first_date)) == 2017) |>
+    mutate(
+      sex      = as.factor(trimws(sex)),
+      location = as.factor(location),
+      TLClass  = as.integer(total_length * .1) * 10
+    )
+  IPGIEL2017Locations <- levels(IPGIEL2017Stocking$location)
+  IPGIELSurvSummary <- IPGIEL2017Stocking |>
+    group_by(location, sex, TLClass) |>
+    summarise(Released = n(), Survivors = sum(Survived),
+              ContactedProp = Survivors / Released, .groups = "drop") |>
+    filter(Released >= 5)
+  model_data_giel <- IPGIEL2017Stocking |> filter(sex %in% c("M", "F"))
+  giel_model_ok <- nrow(model_data_giel) >= MIN_STOCKING_MODEL &&
+    n_distinct(model_data_giel$sex) > 1
+  if (giel_model_ok) {
+    DALModelIPGIEL2017 <- glmmTMB(Survived ~ sex + total_length + location,
+                                   family = binomial(link = "logit"),
+                                   data = model_data_giel)
+    PredictorsIPGIEL <- expand.grid(
+      total_length = seq(230, 290, by = 5),
+      location     = IPGIEL2017Locations,
+      sex          = as.factor(c("M", "F"))
+    )
+    pred_giel <- predict(DALModelIPGIEL2017, newdata = PredictorsIPGIEL,
+                         type = "response", se.fit = TRUE)
+    PredictedIPGIEL <- PredictorsIPGIEL |>
+      mutate(fit = pred_giel$fit,
+             lowerCI = fit - 1.96 * pred_giel$se.fit,
+             upperCI = fit + 1.96 * pred_giel$se.fit,
+             Backwater = bw_label(as.character(location)))
+    IPGIELSurvSummary <- IPGIELSurvSummary |>
+      mutate(Backwater = bw_label(as.character(location)))
+    p_giel_survival <- ggplot(PredictedIPGIEL,
+                              aes(x = total_length, y = fit, color = sex)) +
+      geom_ribbon(aes(ymin = lowerCI, ymax = upperCI, fill = sex),
+                  alpha = 0.2, color = NA) +
+      geom_line(linewidth = 1) +
+      geom_point(data = IPGIELSurvSummary |> filter(sex %in% c("M", "F")),
+                 aes(x = TLClass, y = ContactedProp), shape = 16, size = 2) +
+      facet_wrap(~Backwater, nrow = 3) +
+      labs(x = "Total Length (mm)",
+           y = paste0("Detection Probability"),
+           color = "Sex", fill = "Sex") +
+      theme_minimal() +
+      theme(strip.text = element_text(face = "bold"))
+    save_plot(p_giel_survival, "IPGIEL2017Survival90DaysPostStocking.png",
+              width = 6, height = 4)
+    p_giel_survival
+  } else {
+    cat("*Post-stocking survival model for IP GIEL ponds skipped: insufficient data.*")
+  }
+}
+```
+
+
+
+```{r ip-giel-survival-table}
+if (run_ip_giel && exists("DALModelIPGIEL2017")) {
+  IPGIELResultsTable <- broom.mixed::tidy(DALModelIPGIEL2017, effects = "fixed",
+                                          conf.int = TRUE) |>
+    mutate(
+      across(where(is.numeric), ~round(., 3)),
+      signif = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01  ~ "**",
+        p.value < 0.05  ~ "*",
+        p.value < 0.1   ~ ".",
+        TRUE            ~ ""
+      )
+    )
+  knitr::kable(IPGIELResultsTable |>
+                 select(term, estimate, std.error, conf.low, conf.high,
+                        statistic, p.value, signif),
+               caption = "Logistic regression results for IPCA Bonytail post-stocking survival (2017 cohort).")
+}
+```
+
+
+
+Unlike Razorback Sucker, sex and release size had limited apparent influence on post-stocking detection probability for Bonytail. The range of release sizes for Bonytail was considerably narrower (approximately 240–290 mm) than for Razorback Sucker (350–500 mm), which reduces statistical power to detect a size effect. Despite being released at smaller sizes, initial post-release detection rates for Bonytail were higher than for the smallest Razorback Sucker, but long-term survival declined at a faster rate.
+
+```{r ip-giel-stocking-table}
+if (run_ip_giel) {
+  build_stocking_table(
+    StudyBWAnalysis |> filter(location %in% GIELPonds, location_id > 1042,
+                               release_year < year(Sys.Date()) - 1),
+    c("location", "release_year")
+  ) |>
+    mutate(location = bw_label(location)) |>
+    arrange(location, release_year) |>
+    knitr::kable(
+      col.names = c("Pond", "Year", "F", "M", "U", "Total", "F", "M", "U", "Total"),
+      align     = c("l", "c", rep("c", 8)),
+      caption   = "Bonytail stocked and survived (≥90 DAL) at IPCA ponds by pond, stocking year, and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
+    ) |>
+    kable_styling(bootstrap_options = c("striped", "condensed"),
+                  full_width = FALSE, position = "left") |>
+    add_header_above(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+}
+```
+
+#### Known Survivors
+
+
+
+```{r ip-giel-known-survival}
+#| label: fig-ip-giel-known-survival
+#| fig-cap: "Minimum known survivors over time for Bonytail at IPCA ponds, by sex and pond."
+#| fig-width: 8
+#| fig-height: 7
+if (run_ip_giel) {
+  SurvivorCountsIPGIEL <- expand_grid(
+    Date     = unique(KnownSurvivalIPGIEL$Date),
+    sex      = unique(KnownSurvivalIPGIEL$sex),
+    location = unique(KnownSurvivalIPGIEL$location)
+  ) |>
+    left_join(KnownSurvivalIPGIEL |>
+                count(Date, sex, location, name = "Count"),
+              by = c("Date", "sex", "location")) |>
+    mutate(Count = replace_na(Count, 0),
+           Backwater = bw_label(location))
+  SurvivorCountsIPGIEL$sex <- factor(SurvivorCountsIPGIEL$sex,
+                                      levels = c("F", "M", "U"))
+  p_giel_ks <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)) +
+    geom_line(aes(color = sex, linetype = sex)) +
+    scale_x_date(date_breaks = "1 month",
+                 labels = function(x) ifelse(month(x) == 1,
+                                             format(x, "%Y"), "")) +
+    facet_wrap(~Backwater, nrow = 3) +
+    theme_minimal() +
+    theme(
+      axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(size = 9),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.line = element_line(color = "black"),
+      strip.text = element_text(face = "bold")
+    ) +
+    labs(x = "Date", y = "Count", color = "Sex", linetype = "Sex")
+  save_plot(p_giel_ks, "KnownSurvivalPlotIPGIEL.png", width = 8, height = 7)
+  p_giel_ks
+}
+```
+
+
+
+The known survivor trajectories for Bonytail ponds show a steeper decline compared to Razorback Sucker ponds at Imperial Ponds. This pattern is consistent with the lower long-term survival observed in the post-stocking model and may reflect differences in habitat use, scanner coverage, or species-specific behavior.
+
+
+
+#### Population Estimates
+
+
+
+```{r ip-giel-estimates}
+#| label: fig-ip-giel-estimates
+#| fig-cap: "Annual modified Petersen population estimates for PIT-tagged Bonytail at each IPCA pond. Census years with ≤3 recaptures are excluded."
+#| fig-width: 8
+#| fig-height: 7
+if (run_ip_giel && exists("BWEstimates")) {
+  p_giel_est <- ggplot(
+    BWEstimates |> filter(str_starts(Backwater, "IP"), Species == "GIEL"),
+    aes(x = CensusDate, y = Estimate)
+  ) +
+    geom_line(data = TotalCountIPGIEL,
+              aes(x = Date, y = Count, group = Backwater),
+              linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
+    geom_point(shape = 21, fill = "steelblue", color = "black",
+               size = 3, stroke = 0.5) +
+    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+                  width = 10, color = "steelblue") +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+                 expand = expansion(add = c(30, 60))) +
+    scale_y_continuous(limits = c(0, NA)) +
+    labs(x = "Year", y = "Estimate") +
+    facet_wrap(~Backwater, nrow = 3) +
+    theme_minimal() +
+    theme(axis.text = element_text(size = 9),
+          axis.line = element_line(color = "black"),
+          panel.grid.minor = element_blank(),
+          strip.text = element_text(face = "bold"))
+  save_plot(p_giel_est, "IPGIELEstimatePlot.png", width = 8, height = 7)
+  p_giel_est
+}
+```
+
+
+
+Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer census years than for Razorback Sucker, reflecting the faster population decline and correspondingly lower recapture rates in later years. Where estimates are available, they are generally consistent with the concurrent known survivor counts.
+
+
+
+---
+
+
+
+### Cross-Site Comparisons
+
+
+
+The following figures synthesize data across all seven backwaters to address two key questions: (1) how do survivors from initial stockings compare to survivors from supplemental or restock events over time, and (2) is sex-based survival at Imperial Ponds consistent with patterns at Yuma Cove?
+
+
+
+#### Stocking Cohort Survivors
+
+
+
+```{r cohort-comparison-data}
+#| include: false
+# First stocking year per location
+FirstStockingByLocation <- StudyBWAnalysis |>
+  filter(event == "stocking") |>
+  group_by(location) |>
+  summarise(InitialYear = min(release_year), .groups = "drop")
+# Combine all known survival datasets; tag each with species
+AllKnownSurvival <- bind_rows(
+  KnownSurvivalYuma   |> mutate(location = "Yuma Cove backwater", species = "XYTE"),
+  KnownSurvivalIPXYTE |> mutate(species = "XYTE"),
+  KnownSurvivalIPGIEL |> mutate(species = "GIEL")
+) |>
+  filter(event == "stocking") |>
+  mutate(StockingYear = year(first_date)) |>
+  filter(!StockingYear %in% c(2024, 2025)) |>
+  left_join(FirstStockingByLocation, by = "location") |>
+  mutate(
+    IsInitial   = StockingYear == InitialYear,
+    CohortLabel = paste0(StockingYear,
+                         ifelse(IsInitial, " (Initial)", " (Suppl.)")),
+    BWLabel     = ifelse(str_detect(location, "Yuma"), "YCB", bw_label(location))
+  )
+# Denominator: total fish stocked per location x stocking year (all stocked, not just survivors)
+CohortSizes <- StudyBWAnalysis |>
+  filter(event == "stocking", !release_year %in% c(2024, 2025)) |>
+  group_by(location, StockingYear = release_year) |>
+  summarise(CohortN = n(), .groups = "drop")
+CohortCounts <- AllKnownSurvival |>
+  group_by(Date, location, BWLabel, StockingYear, CohortLabel, IsInitial, species) |>
+  summarise(Count = n(), .groups = "drop") |>
+  left_join(CohortSizes, by = c("location", "StockingYear")) |>
+  mutate(PctSurviving = Count / CohortN)
+```
+
+```{r cohort-comparison-xyte}
+#| label: fig-cohort-xyte
+#| fig-cap: "Percentage of each stocking cohort surviving over time, by stocking year, for Razorback Sucker at each backwater. The initial stocking at each location is labelled '(Initial)'; subsequent events are labelled '(Suppl.)'. Denominator is the total number of fish stocked in that cohort."
+#| fig-width: 8
+#| fig-height: 10
+CohortCounts_XYTE <- CohortCounts |> filter(species == "XYTE")
+bw_order_xyte <- c("YCB",
+                    sort(unique(CohortCounts_XYTE$BWLabel[
+                      CohortCounts_XYTE$BWLabel != "YCB"])))
+CohortCounts_XYTE$BWLabel <- factor(CohortCounts_XYTE$BWLabel, levels = bw_order_xyte)
+CohortXYTEPlot <- ggplot(CohortCounts_XYTE,
+                          aes(x = Date, y = PctSurviving,
+                              color = CohortLabel, group = CohortLabel)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~BWLabel, ncol = 1) +
+  scale_x_date(date_breaks = "1 year",
+               labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+  scale_color_viridis_d(option = "turbo") +
+  labs(x = "Date", y = "% of Cohort Surviving", color = "Stocking Cohort") +
+  theme_minimal() +
+  theme(
+    axis.ticks.x       = element_line(color = "black", linewidth = 0.5),
+    axis.text.x        = element_text(size = 7),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.line          = element_line(color = "black"),
+    legend.position    = "bottom",
+    strip.text         = element_text(face = "bold")
+  )
+save_plot(CohortXYTEPlot, "CohortComparisonXYTEPlot.png", width = 8, height = 10)
+```
+
+```{r cohort-comparison-giel}
+#| label: fig-cohort-giel
+#| fig-cap: "Percentage of each stocking cohort surviving over time, by stocking year, for Bonytail at each backwater. The initial stocking at each location is labelled '(Initial)'; subsequent events are labelled '(Suppl.)'. Denominator is the total number of fish stocked in that cohort."
+#| fig-width: 8
+#| fig-height: 7
+CohortCounts_GIEL <- CohortCounts |> filter(species == "GIEL")
+CohortCounts_GIEL$BWLabel <- factor(CohortCounts_GIEL$BWLabel,
+                                     levels = sort(unique(CohortCounts_GIEL$BWLabel)))
+CohortGIELPlot <- ggplot(CohortCounts_GIEL,
+                          aes(x = Date, y = PctSurviving,
+                              color = CohortLabel, group = CohortLabel)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~BWLabel, ncol = 1) +
+  scale_x_date(date_breaks = "1 year",
+               labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+  scale_color_viridis_d(option = "turbo") +
+  labs(x = "Date", y = "% of Cohort Surviving", color = "Stocking Cohort") +
+  theme_minimal() +
+  theme(
+    axis.ticks.x       = element_line(color = "black", linewidth = 0.5),
+    axis.text.x        = element_text(size = 7),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.line          = element_line(color = "black"),
+    legend.position    = "bottom",
+    strip.text         = element_text(face = "bold")
+  )
+save_plot(CohortGIELPlot, "CohortComparisonGIELPlot.png", width = 8, height = 7)
+```
+
+
+
+Across all backwaters, the initial stocking cohort constitutes the longest-tracked group of survivors and shows steady attrition over time. Expressing survival as a percentage of each cohort's starting size allows direct comparison of attrition rates across stocking events regardless of cohort size. Supplemental cohorts generally start near 100% and decline at rates similar to the initial stocking; differences between cohorts at the same location may reflect variation in stocking size, timing, or scanner coverage at the time of release.
+
+
+
+```{r suspect-transfers}
+#| label: suspect-transfers
+#| results: asis
+if (nrow(SuspectTransfers) > 0) {
+  write.csv(SuspectTransfers |>
+              select(PITIndex, Backwater, TransferDate, TransferLocation,
+                     TransferYear, PostTransferMonths, LastPostTransferContact),
+            "output/TransfersWithContinuedScanning.csv", row.names = FALSE)
+  tag_details <- SuspectTransfers |>
+    mutate(detail = paste0(
+      PITIndex, " (listed transfer date: ", format(TransferDate, "%B %d, %Y"),
+      " to ", TransferLocation, "; last backwater contact: ",
+      format(LastPostTransferContact, "%B %d, %Y"), ")"
+    )) |>
+    pull(detail)
+  cat(
+    "\n**Note on suspect transfer records:** The following PIT tag",
+    if (nrow(SuspectTransfers) > 1) "s were" else " was",
+    "found in the NFWG database with a transfer record but",
+    if (nrow(SuspectTransfers) > 1) "continued" else "continued",
+    "to generate PIT scanner contacts at the same backwater across multiple",
+    "months after the listed transfer date.",
+    if (nrow(SuspectTransfers) > 1) "These tags were" else "This tag was",
+    "retained in the known survival analysis because the sustained scanning",
+    "record indicates the fish remained in — or returned to — the backwater.",
+    "Tag details:",
+    paste(tag_details, collapse = "; "),
+    "A record of these cases has been written to",
+    "`output/TransfersWithContinuedScanning.csv`.\n"
+  )
+}
+```
+
+
+
+#### Sex-Based Survival Comparison
+
+
+
+```{r sex-survival-data}
+#| include: false
+SexSurvivalSummary <- StudyBWAnalysis |>
+  filter(event == "stocking",
+         sex %in% c("M", "F"),
+         release_year < year(Sys.Date()),
+         !(location_id == 592 & release_year %in% c(2015, 2020))) |>
+  group_by(species, location, sex) |>
+  summarise(
+    Released       = n(),
+    Survived_90DAL = sum(Survived),
+    PropSurvived   = Survived_90DAL / Released,
+    .groups = "drop"
+  ) |>
+  filter(Released >= 5) |>
+  mutate(
+    BWLabel      = bw_label(location),
+    SpeciesLabel = ifelse(species == "XYTE", "Razorback Sucker", "Bonytail")
+  )
+# Order Yuma first, then remaining ponds alphabetically
+bw_order_sex <- c("Yuma Cove",
+                   sort(unique(SexSurvivalSummary$BWLabel[
+                     SexSurvivalSummary$BWLabel != "Yuma Cove"])))
+SexSurvivalSummary$BWLabel <- factor(SexSurvivalSummary$BWLabel,
+                                      levels = bw_order_sex)
+```
+
+```{r sex-survival-xyte}
+#| label: fig-sex-survival-xyte
+#| fig-cap: "Proportion of stocked Razorback Sucker surviving ≥90 days post-release by sex and backwater. Only stocking events with ≥5 fish of each sex are included. Values are raw proportions, not model-predicted estimates."
+#| fig-width: 7
+#| fig-height: 4
+SexSurvivalXYTEPlot <- ggplot(
+  SexSurvivalSummary |> filter(species == "XYTE"),
+  aes(x = BWLabel, y = PropSurvived, fill = sex)
+) +
+  geom_col(position = "dodge", color = "black", linewidth = 0.3) +
+  scale_y_continuous(limits = c(0, 1),
+                     labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("F" = "#E8A598", "M" = "#7BAFD4"),
+                    labels = c("F" = "Female", "M" = "Male")) +
+  labs(x = "Backwater", y = "Proportion Survived (≥90 DAL)", fill = "Sex") +
+  theme_minimal() +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 9),
+    legend.position = "bottom"
+  )
+save_plot(SexSurvivalXYTEPlot, "SexSurvivalXYTEPlot.png", width = 7, height = 4)
+```
+
+```{r sex-survival-giel}
+#| label: fig-sex-survival-giel
+#| fig-cap: "Proportion of stocked Bonytail surviving ≥90 days post-release by sex and backwater. Only stocking events with ≥5 fish of each sex are included. Values are raw proportions, not model-predicted estimates."
+#| fig-width: 5
+#| fig-height: 4
+SexSurvivalGIELPlot <- ggplot(
+  SexSurvivalSummary |> filter(species == "GIEL"),
+  aes(x = BWLabel, y = PropSurvived, fill = sex)
+) +
+  geom_col(position = "dodge", color = "black", linewidth = 0.3) +
+  scale_y_continuous(limits = c(0, 1),
+                     labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("F" = "#E8A598", "M" = "#7BAFD4"),
+                    labels = c("F" = "Female", "M" = "Male")) +
+  labs(x = "Backwater", y = "Proportion Survived (≥90 DAL)", fill = "Sex") +
+  theme_minimal() +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 9),
+    legend.position = "bottom"
+  )
+save_plot(SexSurvivalGIELPlot, "SexSurvivalGIELPlot.png", width = 5, height = 4)
+```
+
+
+
+```{r sex-survival-narrative}
+# Compute some inline values for narrative
+sex_summary_wide <- SexSurvivalSummary |>
+  select(SpeciesLabel, BWLabel, sex, PropSurvived) |>
+  pivot_wider(names_from = sex, values_from = PropSurvived) |>
+  mutate(FMinusM = round(F - M, 3))
+yuma_diff <- sex_summary_wide |>
+  filter(BWLabel == "Yuma Cove") |>
+  pull(FMinusM) |>
+  mean(na.rm = TRUE) |>
+  round(3)
+ip_xyte_diff <- sex_summary_wide |>
+  filter(BWLabel != "Yuma Cove", SpeciesLabel == "Razorback Sucker") |>
+  pull(FMinusM) |>
+  mean(na.rm = TRUE) |>
+  round(3)
+```
+
+
+
+The sex-based survival comparison reveals that females consistently showed higher proportional survival than males at Yuma Cove (female − male difference: `r yuma_diff`). This pattern was `r if(sign(yuma_diff) == sign(ip_xyte_diff)) "consistent with" else "different from"` what was observed across IPCA Razorback Sucker ponds (mean female − male difference across XYTE ponds: `r ip_xyte_diff`). For Bonytail, differences between sexes were smaller, consistent with the weaker sex effect observed in the post-stocking survival model for that species.
+
+
+
+---
+
+
+
+## References
+
+
+
+Downey, A.M., B.R. Kesner, P.C. Reap, C.A. Pacey, and P.C. Marsh. 2025. Demographics and Monitoring of Repatriated Razorback Suckers in Lake Mohave. 2020–2024 Final Project Report. Submitted to the Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada, by Marsh & Associates, LLC, Tempe, Arizona, under contract No. 140R3020C0005.
+
+
+
+Ricker, W.E. 1975. Computation and interpretation of biological statistics of fish populations. Bulletin 191, Fisheries Research Board of Canada, Ottawa.
+

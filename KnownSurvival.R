@@ -14,15 +14,39 @@ packages(openxlsx) # package openxlsx is required to create to Excel files
 StudyBWAnalysis <- StudyBWAnalysis %>%
   mutate(sex = if_else(sex == "J", "U", sex))
 
+# Identify suspect transfer records: fish flagged as transferred but with
+# continued PIT scanner contacts at the same backwater spanning more than one
+# calendar month after the listed transfer date. These are likely data entry
+# errors or fish that returned to the backwater and should remain in the analysis.
+SuspectTransfers <- StudyBWTransfersAnalysis |>
+  select(PITIndex, Backwater, TransferDate, TransferLocation, TransferYear) |>
+  inner_join(
+    StudyBWContacts |> select(PITIndex, Backwater, Date),
+    by = c("PITIndex", "Backwater")
+  ) |>
+  filter(Date > TransferDate) |>
+  group_by(PITIndex, Backwater, TransferDate, TransferLocation, TransferYear) |>
+  summarise(
+    PostTransferMonths  = n_distinct(format(Date, "%Y-%m")),
+    LastPostTransferContact = max(Date),
+    .groups = "drop"
+  ) |>
+  filter(PostTransferMonths > 1)
+
 # separate out the 3 study groups for analysis
+# Transfer == 0 excludes fish removed from the backwater; suspect transfers
+# (continued scanning after listed transfer date across multiple months) are retained.
 StudyBWXYTEIP <- StudyBWAnalysis %>% 
-  filter(location_id != 592, species == "XYTE", MaxDAL > SurvivalDAL)
+  filter(location_id != 592, species == "XYTE", MaxDAL > SurvivalDAL,
+         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
 
 StudyBWGIELIP <- StudyBWAnalysis %>% 
-  filter(location_id != 592, species == "GIEL", MaxDAL > SurvivalDAL)
+  filter(location_id != 592, species == "GIEL", MaxDAL > SurvivalDAL,
+         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
 
 StudyBWYuma <- StudyBWAnalysis %>% 
-  filter(location_id == 592, MaxDAL > SurvivalDAL)
+  filter(location_id == 592, MaxDAL > SurvivalDAL,
+         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
 
 # Determine start date for each study group and create a dataframe 
 # with each day as a value from starting date to 2 x SurvivalDAL
@@ -141,7 +165,7 @@ KnownSurvivalPlotYuma <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
                labels = function(x) ifelse(month(x) == 1, format(x, "%Y"), "")) +
   theme_minimal() +
   theme(axis.ticks.x = element_line(color = "black", linewidth = 0.5),
-        ax is.text = element_text(size = 10),
+        axis.text = element_text(size = 10),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         axis.line = element_line(color = "black")) +
@@ -261,7 +285,7 @@ KnownSurvivalPlotIPGIEL
 dev.off()
 
 save(KnownSurvivalYuma, KnownSurvivalIPXYTE, KnownSurvivalIPGIEL,
-     TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, packages, 
+     TotalCountIPGIEL, TotalCountIPXYTE, TotalCountYuma, SuspectTransfers, packages, 
      file = "data/KnownSurvivalCounts.RData")
 
 

@@ -597,3 +597,4 @@ associated with those records are also excluded from all detection analyses. Eff
 patterns and detection rates reflect only the `r nrow(ReliableEffort)` deployments
 where continuous operation could be assumed.
 :::
+
