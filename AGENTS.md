@@ -1,5 +1,9 @@
 # BackwaterGenetics Project — Agent Memory
 
+> **AGENTS.md File Maintenance:** This file must use **LF-only line endings** (Unix-style). Never write CRLF () line endings to this file. When editing via tools that write raw bytes (e.g., Python scripts, bash), always open/write in text mode or explicitly convert  → . The Error 0x80070006: The handle is invalid. tool may silently introduce CRLF if the file already contains them — if you must use the edit tool and then verify, run: `python3 -c "print(open('AGENTS.md','rb').read().count(b'
+'))"` and strip any introduced CRLF immediately.
+
+
 ## Project Overview
 Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonytail (GIEL) in two sets of backwater habitats along the lower Colorado River: Yuma Cove Backwater and Imperial Ponds California (IPCA 1–6). Analyses cover post-stocking survival, minimum known survivor counts, annual mark-recapture population estimates, and reproductive contribution from parentage genetics (Dowling lab). Managed by Brian Kesner, Marsh & Associates.
 
@@ -47,8 +51,33 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 | 5 | `BackwaterGrowth.R` | Growth summaries (no saved PNGs currently) |
 | 6 | `GeneticsAndSurvival.R` | 2 PNG offspring contribution figures |
 | 7 | `BackwaterMCR.R` | CJS model results (Pond 1 only; requires MARK software) |
-| 8 | `PopulationMonitoring.qmd` | Full 7-location report (HTML or DOCX); regenerates all PNGs and adds 2 cross-site comparison figures. Requires steps 1-2 first. Does **not** source scripts 3-6; models and genetics run inline. |
+| 8 | `PopulationMonitoring.qmd` | Full 7-location report (HTML or DOCX); regenerates all PNGs and adds 2 cross-site comparison figures. Requires steps 1-2 first. Does **not** source scripts 3-6; models and genetics run inline. Includes an **Introduction** section (species conservation status, OCH concept, site histories, BONY pond sizes) and a **Data Sources and Monitoring Infrastructure** subsection in Methods. Narrative paragraphs for each location draw on `2025Report_IP_PopulationMonitoring.md`, `Marsh_et_al_2024_Summary.md`, and related document summaries. |
 | — | `ScanningEffectiveness.qmd` | Standalone PIT scanner effectiveness report (HTML). Requires step 1 only. Covers effort reliability filtering, monthly detection probability, seasonal patterns, per-sub-effort detection rates, and a diagnostic section identifying tagged fish with zero passive antenna contacts. |
+
+---
+
+## Key Reference Documents
+
+| File | Description |
+|---|---|
+| `documents/2025FinalReport.docx` | Full 2025 Dowling lab genetics and demographic final report for BONY and RASU (mainstem and OCH). GT-seq panel, CKMR methods, genetic database, tissue archive. See `2025FinalReport_Summary.md`. |
+| `documents/2025FinalReport_Summary.md` | Summary of `2025FinalReport.docx` — GT-seq panel results for BONY (238 loci) and RASU, CKMR abundance estimates, database (http://lcrgenetics.net), and MSB tissue archive through 2025. |
+| `documents/2025Report_YCB_PopulationMonitoring.docx` | Population monitoring narrative section for Yuma Cove Backwater RASU through 2025. Covers post-stocking survival (sex-biased), known survivors, mark-recapture estimates, and reproductive contribution. See `2025Report_YCB_PopulationMonitoring_Summary.md`. |
+| `documents/2025Report_YCB_PopulationMonitoring_Summary.md` | Summary of `2025Report_YCB_PopulationMonitoring.docx`. Key facts: 24M vs 80F survived 2013 stocking; 2018 recruit cohort die-off preceded management shift to harvesting; majority of current YCB population is naturally recruited. |
+| `documents/2025Report_IP_PopulationMonitoring.md` | Draft population monitoring narrative for Imperial Ponds RASU (Ponds 1, 3, 4) and BONY (Ponds 2, 5, 6). Includes recruit counts by pond and year. |
+| `documents/Marsh_et_al_2024_Summary.md` | Summary of Marsh et al. (2024) — the primary reference for Imperial Ponds site history, design rationale, OCH concept, and BONY pond sizes. See file for full citation. |
+| `documents/backwater final report draft 16 Jan 2020.docx` | Dowling lab 2019 final report (draft Jan 2020) on RASU genetics and demographics in OCH including ephemeral ponds (AJ, DAN), YCB, and early IPCA data. Used 14-locus microsatellites. Predecessor to `2025FinalReport.docx`. See `BackwaterFinalReport2020_Summary.md`. |
+| `documents/BackwaterFinalReport2020_Summary.md` | Summary of `backwater final report draft 16 Jan 2020.docx`. Covers AJ and DAN ephemeral ponds (not in current project), YCB, and early IPCA. Established sex-biased survival pattern; identified need for SNP parentage. |
+| `documents/IP Design Workshop 2005.pdf` | Bureau of Reclamation design workshop report for reconstructing the DU2 Ponds at INWR into what became the IPCA. Documents why original ponds failed and six-pond layout design goals. See `IP_DesignWorkshop2005_Summary.md`. |
+| `documents/IP_DesignWorkshop2005_Summary.md` | Summary of `IP Design Workshop 2005.pdf`. Foundational document for IPCA site design and rationale for river-disconnected, well-water-supplied ponds. |
+| `documents/LCR MSCP 2021 - Imperial Ponds Conservation Area Annual Report 2018.pdf` | FY2018 IPCA annual report (Swatzell et al. 2020). First full monitoring year after 2017 initial stocking. Contains stocking table, FY18 population estimates (60–66% RASU survival at 21 months), and mass BONY spawning observation. See `IPCA_AnnualReport2018_Summary.md`. |
+| `documents/IPCA_AnnualReport2018_Summary.md` | Summary of the FY2018 IPCA annual report. Key reference for 2017 stocking conditions and first-year survival. |
+| `documents/LCR MSCP Imperial Ponds Renovation Plan 2014.pdf` | LCR MSCP plan (Finnegan 2014) for rotenone renovation of all six IPCA ponds in Dec 2014–Jan 2015 prior to 2017 stocking. See `IPRenovationPlan2014_Summary.md`. |
+| `documents/IPRenovationPlan2014_Summary.md` | Summary of the 2014 renovation plan. Explains the IPCA gap before 2017 stocking and the conversion to 100% well-water supply. |
+| `documents/Yuma BW summary of events.xlsx` | Reference spreadsheet of major management events at YCB 2013–2025: stockings (2013, 2014, 2015, 2020, 2025) and netting/harvest events with fish counts. See `YumaBW_SummaryOfEvents_Summary.md`. |
+| `documents/YumaBW_SummaryOfEvents_Summary.md` | Summary of `Yuma BW summary of events.xlsx`. Stocking and netting events at YCB with counts of tagged/untagged fish returned and harvested. |
+
+> **Marsh et al. (2024)** is the canonical reference for the OCH program context, sex-biased survival patterns, and Imperial Ponds history. Cite as: Marsh, P.C., T.E. Dowling, T.F. Turner, M.J. Osborne, and B.R. Kesner. 2024. Monographs of the Western North American Naturalist, Vol. 15, Article 1.
 
 ---
 

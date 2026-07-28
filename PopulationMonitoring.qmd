@@ -93,9 +93,33 @@ build_stocking_table <- function(data, group_cols) {
 
 
 
+## Introduction
+
+Bonytail (*Gila elegans*; BONY) and Razorback Sucker (*Xyrauchen texanus*; RASU) are endemic to the Colorado River basin and are among the most imperiled large-river fishes in North America. Bonytail is functionally extinct in the wild, persisting only through hatchery propagation and managed reintroductions. Razorback Sucker populations in the Lower Colorado River (LCR) are similarly precarious — sustained primarily by hatchery stocking, with natural recruitment severely limited by nonnative predatory and competitive fish throughout most of the river system. Between 1991 and 2022, an estimated 483,000 BONY and 726,000 RASU were released into LCR habitats with little evidence of long-term self-sustaining establishment in open-water environments (Marsh et al. 2024).
+
+The off-channel habitat (OCH) concept, formalized by Minckley et al. (2003) and refined through two decades of research (Marsh et al. 2024), emerged as a response to these persistent failures. The core principle is to establish predator-free isolated ponds where native fish can complete their life cycle, reproduce naturally, and build demographic buffers against stochastic extinction. Periodic exchange of individuals among OCHs and with river populations is intended to maintain genetic diversity and prevent inbreeding. The network of OCHs described in this report represents a key component of the LCR Multi-Species Conservation Program (LCR MSCP) strategy for long-term conservation of these species.
+
+### Study Sites
+
+**Yuma Cove Backwater (YCB)** is a permanent off-channel pond located near Yuma, Arizona (LCR Reach 5). The site has been continuously monitored for Razorback Sucker since an initial stocking of 200 adults (100M/100F) in 2013. Passive PIT scanning infrastructure has been in near-continuous operation since that stocking, providing an exceptionally detailed record of individual fish detection over time. Supplemental stockings occurred in 2014, 2015, 2020, and 2025. The YCB population has been substantially augmented by natural recruitment since at least 2016 and is currently considered one of the more productive RASU OCHs in the LCR network (Marsh et al. 2024; Dowling et al. 2025).
+
+**Imperial Ponds Conservation Area (IPCA)** comprises six isolated backwater ponds located within the Imperial National Wildlife Refuge (INWR) near Yuma, Arizona, at approximately River Mile 59 in Reach 5 of the LCR MSCP. The site encompasses approximately 126 acres, with 80 acres of open-water habitat across the six ponds designated for RASU and BONY. The ponds originated as the "DU2 Ponds" constructed in 2002 under the 1997 Biological Opinion. Following early failures due to nonnative fish invasion and hypoxic conditions (Bureau of Reclamation 2005), the site was redesigned with a six-pond layout optimized for native fish management: individual ponds are hydrologically disconnected from each other and from the Colorado River, and water is supplied exclusively from INWR groundwater wells — eliminating nonnative fish invasion pathways associated with river-connected systems. The ponds were chemically renovated with rotenone in December 2014 and January 2015 (Finnegan 2014) to remove all fish prior to restocking, and all six ponds were stocked with native fish in early 2017 (Swatzell et al. 2020).
+
+Ponds 1, 3, and 4 were stocked with Razorback Sucker; Ponds 2, 5, and 6 were stocked with Bonytail. Each pond received approximately 300 adults in a 1:1 sex ratio. Confirmed pond sizes for the three BONY ponds are: IP2 = 12.5 acres, IP5 = 21.3 acres, and IP6 = 8.8 acres (Marsh et al. 2024; Dowling et al. 2025). The IPCA ponds are equipped with 2–3 permanent remote PIT scanners each, with weirs on select antennas in Ponds 4, 5, and 6, and data have been collected continuously since the 2017 stocking. Land use of the site is managed under a long-term agreement between Bureau of Reclamation and USFWS; the site is closed to the public.
+
+This report presents population monitoring results for both species at both sites through the current monitoring year. Demographic parameters — including post-stocking survival, minimum known survivor counts, annual mark-recapture population estimates, and reproductive contribution from parentage genetics — are estimated and interpreted using standardized methods applied consistently across all locations.
+
+---
+
 ## Population Monitoring Methods
 
 
+
+### Data Sources and Monitoring Infrastructure
+
+Remote PIT (passive integrated transponder) detection is the primary monitoring tool at both sites. Passive PIT antennas detect individually tagged fish as they pass through the antenna field, providing continuous, non-invasive records of fish presence without requiring active sampling. At Yuma Cove Backwater, antennas have been operated near-continuously since 2013. At IPCA, 2–3 permanent remote antennas are installed per pond, with weirs directing fish movement through the antenna field at select locations (Ponds 4, 5, and 6). Antenna data are downloaded periodically and uploaded to the Lower Colorado River Native Fishes (NCREASED) database, from which all PIT scanning and capture records used in this report are drawn.
+
+Periodic capture events (trammel netting, trapping) are conducted at both sites to assess population demographics, tag naturally recruited fish, and facilitate management actions such as transfers or harvests. All PIT-tagged fish encountered at these events are recorded in the NCREASED database regardless of whether they were also detected by passive antennas.
 
 Records for PIT-tagged Razorback Sucker (XYTE) and Bonytail (GIEL) stocked, captured, or remotely detected (PIT scanned) within Yuma Cove Backwater and Imperial Ponds California (IPCA 1–6) were filtered from the Lower Colorado River Native Fishes Database. Demographic parameters — including post-stocking survival, minimum known survivor counts, and annual population estimates — were estimated from these data. Untagged fish captured and released or transferred were not included. All analyses were performed in R (v`r R.version$major`.`r R.version$minor`) using the BackwaterGenetics R project available on GitHub.
 
@@ -175,7 +199,7 @@ run_yuma <- YumaScan_n >= MIN_FISH_POP_MON
 
 
 
-`r if (run_yuma) "Yuma Cove Backwater has been monitored for Razorback Sucker since 2013. Initial and supplemental stocking events, combined with continuous PIT scanning, allow assessment of post-stocking survival, long-term population trajectory, and annual population size."`
+`r if (run_yuma) "Yuma Cove Backwater has been monitored for Razorback Sucker since the initial stocking of 200 adults (100M/100F) in 2013, with supplemental stockings in 2014, 2015, 2020, and 2025. Continuous passive PIT scanning since 2013 provides an unusually complete record of individual fish detection over more than a decade. The combination of multiple stocking cohorts, confirmed natural recruitment beginning around 2016, and periodic management interventions (netting, harvest, restocking) makes YCB one of the most extensively documented OCH populations in the LCR system."`
 
 
 
@@ -277,7 +301,7 @@ if (run_yuma && exists("DALModelYuma")) {
 
 
 
-Post-stocking survival for Razorback Sucker at Yuma Cove was influenced by sex, release total length, and release year. Females tended to be released at larger sizes on average than males, which, combined with the positive effect of length on survival, contributed to higher initial detection rates among females. The effect of size was most apparent across stocking years where the range of release TL was broad.
+Post-stocking survival for Razorback Sucker at Yuma Cove was significantly influenced by sex, release total length, and release year. Of the 100 males and 100 females stocked in 2013, only approximately 24 males survived the 90-day post-stocking period compared to approximately 80 females — a strongly skewed outcome that persisted across all subsequent stocking events (Marsh et al. 2024). Females were released at larger average TL than males in all stocking cohorts, and the positive effect of size on detection probability accounts for part of the sex difference, but does not fully explain it. The 2014 and later cohorts showed dramatically lower overall survival than the 2013 stocking, and the 2015 cohort had essentially no detectable male survivors. The 2015 and 2020 cohorts are excluded from the survival model due to absence of male contacts and missing sex data, respectively.
 
 ```{r yuma-stocking-table}
 if (run_yuma) {
@@ -342,7 +366,7 @@ if (run_yuma) {
 
 
 
-Known survivor counts at Yuma Cove peaked following the initial 2013 stocking and reflect the cumulative effect of multiple supplemental stocking events over subsequent years. Persistent differences in the number of surviving males versus females are consistent with the sex effect observed in the post-stocking survival model. The long-term decline in both sexes represents natural attrition in the absence of large-scale restocking.
+Known survivor counts at Yuma Cove peaked following the initial 2013 stocking and reflect the cumulative effect of multiple supplemental stocking events and natural recruitment over subsequent years. The persistent deficit in surviving males relative to females is consistent with the sex-biased post-stocking survival documented in the model and is a characteristic feature of RASU OCH populations across the LCR system (Marsh et al. 2024). Sudden step increases in the survivor trajectory correspond to netting and trapping events that PIT-tagged naturally recruited fish, adding them to the monitored population. Naturally recruited fish at first tagging ranged from 81 to 282 mm TL (median 170 mm) — well below the minimum stocking TL of `r SizeClass2` mm — confirming their origin as naturally produced fish rather than previously stocked adults. Approximately 100 natural recruits survived the 90-day post-tagging criterion in 2018 but disappeared by early 2019, an event consistent with density-dependent resource limitation; management shifted post-2018 toward periodic harvest to manage population size while continuing supplemental stockings. The majority of the current YCB PIT-tagged population consists of naturally recruited fish rather than surviving stocked adults.
 
 
 
@@ -430,7 +454,7 @@ if (run_yuma) {
 
 
 
-Annual population estimates for PIT-tagged Razorback Sucker at Yuma Cove closely track the minimum known survivor trajectory, providing mutual validation between the two methods. Estimates with wide confidence intervals reflect census years with low recapture rates and should be interpreted cautiously.
+Annual population estimates for PIT-tagged Razorback Sucker at Yuma Cove closely track the minimum known survivor trajectory, providing mutual validation between the two methods. The initial 2013 population was estimated at approximately 100 fish, consistent with the known survivor count at that time. Estimates exceeded 200 PIT-tagged individuals in several years during 2016–2019, coinciding with the period of active natural recruitment and recruit tagging. The close alignment between mark-recapture estimates and known survivor counts supports the conclusion that passive PIT scanning captures a large proportion of the living tagged population at this site. Estimates with wide confidence intervals reflect census years with low recapture rates (R approaching the minimum threshold of 3) and should be interpreted with caution.
 
 
 
@@ -530,7 +554,7 @@ if (run_yuma) {
 
 
 
-The proportion of known survivors with detectable offspring varied by sex and stocking year, with some cohorts contributing consistently across multiple reproductive seasons and others declining to zero contribution within a few years. Smaller sample sizes in later years reflect the natural attrition of the stocked cohort and limit interpretation.
+A majority of surviving male and female RASU from the 2013 stocking cohort contributed to detectable offspring in the first five years post-stocking (Dowling et al. 2025). The proportion of survivors with detected larvae or recruits declined over time, with females falling below 50% contribution around 2018 and males around 2021, partly reflecting the increasing contribution of naturally recruited, untagged fish to the breeding pool. Fish from the 2014 and 2015 stocking cohorts showed near-zero contribution in their stocking year, likely because they were sexually immature at release size. The stocking-year counts shown on the figure underscore that declining proportions in later years are based on progressively smaller samples as the stocked cohort ages and attrites naturally.
 
 
 
@@ -552,13 +576,11 @@ run_ip_xyte <- IPXYTEScan_n >= MIN_FISH_POP_MON
 
 
 
-`r paste0("IPCA ponds with Razorback Sucker (", paste(XYTEPonds, collapse = ", "), ") have been monitored since initial stocking in fiscal year 2017. ")`
+`r paste0("IPCA ponds with Razorback Sucker (", paste(XYTEPonds, collapse = ", "), ") were initially stocked with approximately 300 adults per pond (150M/150F) in March 2017 at mean total lengths of 430, 426, and 436 mm for Ponds 1, 3, and 4, respectively (Swatzell et al. 2020). Monitoring uses the same PIT-scanning and capture-based approach as Yuma Cove Backwater, with passive antennas operating continuously since stocking. ")`
 
 `r if (!run_ip_xyte) paste0("*Population monitoring is not presented due to insufficient scanning data (", IPXYTEScan_n, " unique fish detected).*")`
 
-
-
-`r if (run_ip_xyte) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below for XYTE ponds collectively and by individual pond. Parentage-based reproductive contribution is available for IPCA Pond 1 only."`
+`r if (run_ip_xyte) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below for XYTE ponds collectively and by individual pond. Parentage-based reproductive contribution is available for IPCA Pond 1 only; Ponds 3 and 4 lack parentage data at this time."`
 
 
 
@@ -659,7 +681,7 @@ if (run_ip_xyte && exists("DALModelIPXYTE")) {
 
 
 
-Similar to Yuma Cove, post-stocking survival for Razorback Sucker at IPCA ponds was influenced by sex and release size. Release size discrepancies between sexes were consistent with the patterns observed at Yuma Cove, and survival differences between ponds can partially be attributed to variation in scanner coverage and stocking timing.
+Detection probability for RASU stocked at IPCA Ponds 1, 3, and 4 was significantly dependent on sex, release total length, and pond. The positive effect of TL on detection probability was consistent with YCB: larger fish at release were more likely to be detected beyond the 90-day post-stocking window. Female RASU were released at larger average TL than males across all ponds and stocking years, contributing to higher apparent post-stocking survival among females — a pattern that is characteristic of the hatchery production pipeline supplying these backwaters and is not unexpected given typical size at sexual maturity for each sex. Fish stocked at or below approximately 350 mm TL showed notably lower detection probability, consistent with greater post-release vulnerability at smaller sizes (Marsh et al. 2024). Pond-level differences in detection probability reflect a combination of scanner configuration, proportion of the pond surveyed by passive antennas, and variation in stocking timing relative to scanner availability; they should not be interpreted as differences in true survival probability without additional data on scanner effectiveness at each location.
 
 ```{r ip-xyte-stocking-table}
 if (run_ip_xyte) {
@@ -726,7 +748,9 @@ if (run_ip_xyte) {
 
 
 
-Known survivor counts for IPCA Razorback Sucker ponds reflect the timing and magnitude of each stocking event. Supplemental stockings are visible as step increases in the sex-specific survivor counts. The rate of subsequent decline provides a qualitative indicator of post-stocking attrition between monitoring events.
+The minimum known survivor counts for RASU at each IPCA pond reflect the cumulative effect of initial and supplemental stocking events plus natural recruitment, reduced by natural attrition tracked through passive PIT scanning. Each stocking event appears as a step increase in the survivor trajectory, followed by a decline as fish are progressively lost to mortality or extended absence from scanner range.
+
+Natural recruitment into the PIT-tagged population was highly variable among XYTE ponds. Pond 1 had substantial and sustained natural recruitment — 242 recruits that survived the initial 90-day post-tagging period across seven cohort years (2017–2023), peaking at 70 recruits in 2022. In contrast, Ponds 3 and 4 had negligible recruitment: only 5 and 11 surviving recruits, respectively, across scattered years. These recruits were first encountered at sizes well below the minimum stocking TL (most were 100–300 mm at first capture), confirming their origin as naturally reproduced fish tagged during routine sampling. The disparity in natural recruitment between Pond 1 and Ponds 3 and 4 is notable and mirrors the pattern at YCB, where Pond 1 appears to provide more suitable spawning or nursery conditions or receives more intensive sampling effort sufficient to detect and tag juveniles. The persistent male deficit in survivor counts is consistent with the sex-biased post-stocking survival documented in the model and is expected given the patterns documented across all RASU OCH sites (Marsh et al. 2024).
 
 
 
@@ -768,7 +792,7 @@ if (run_ip_xyte && exists("BWEstimates")) {
 
 
 
-Annual estimates for individual IPCA Razorback Sucker ponds show the expected pattern of decline from initial stocking, with the known survivor count providing an independent lower-bound check. In ponds where estimates were not computable (R ≤ 3), the known survivor trajectory is the primary indicator of population size.
+Annual estimates for IPCA Razorback Sucker ponds generally tracked the concurrent known survivor trajectory, providing mutual validation between the two methods where recapture rates were adequate. In ponds and years where the recapture threshold (R > 3) was not met — particularly in Ponds 3 and 4 in later years where populations have declined to low levels — the known survivor count serves as the primary quantitative indicator of population size. The population trajectories for Ponds 3 and 4 are consistent with steady post-stocking attrition with negligible natural recruitment into the PIT-tagged population. Pond 1's trajectory diverges from this pattern due to sustained natural recruitment, and its population dynamics more closely parallel YCB than the other IPCA XYTE ponds.
 
 
 
@@ -877,7 +901,7 @@ if (run_ip_xyte) {
 
 
 
-Reproductive contribution data for IPCA Pond 1 follow a similar pattern to Yuma Cove, with a subset of the surviving stocked population accounting for detected offspring in any given year. Parentage data for IPCA Ponds 2 and 3 are not currently available; that analysis will be added when data are provided by Dowling and Turner.
+Parentage data for IPCA Pond 1 are presented for the 2016 initial stocking cohort (FY2017) through 2022; years beyond this range had insufficient parentage assignments to support reliable proportion estimates (Dowling et al. 2025). A portion of surviving male and female RASU contributed to detectable larvae or recruit offspring during the early years following initial stocking, though reproductive contribution was not uniformly distributed — some individuals contributed consistently across multiple years while others made no detectable contribution in any year. The proportion of survivors with detected offspring generally declined over time in both sexes, consistent with declining survivor numbers and potentially increasing age-related reproductive senescence in the original stocking cohort. Parentage data for IPCA Ponds 3 and 4 are not currently available and will be incorporated when provided by Dowling and Turner.
 
 
 
@@ -899,13 +923,11 @@ run_ip_giel <- IPGIELScan_n >= MIN_FISH_POP_MON
 
 
 
-`r paste0("IPCA ponds with Bonytail (", paste(GIELPonds, collapse = ", "), ") were initially stocked in fiscal year 2017. ")`
+`r paste0("IPCA ponds with Bonytail (", paste(GIELPonds, collapse = ", "), ") were initially stocked in March 2017, concurrent with the RASU stockings at the XYTE ponds. Each BONY pond received approximately 300 adults (150M/150F) at mean TLs of approximately 272 mm (Swatzell et al. 2020). Confirmed pond sizes are: IP2 = 12.5 acres, IP5 = 21.3 acres, and IP6 = 8.8 acres (Marsh et al. 2024; Dowling et al. 2025). Supplemental stockings have occurred at IP2 (2023) and IP5 (2022) following population declines attributed to operational causes (Marsh et al. 2024). ")`
 
 `r if (!run_ip_giel) paste0("*Population monitoring is not presented due to insufficient scanning data (", IPGIELScan_n, " unique fish detected).*")`
 
-
-
-`r if (run_ip_giel) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below. No parentage data are currently available for Bonytail; the reproductive contribution analysis is not included."`
+`r if (run_ip_giel) "Post-stocking survival, known survivor trajectories, and annual population estimates are presented below. No parentage data are currently available for Bonytail at any IPCA pond; the reproductive contribution analysis is not included for this species."`
 
 
 
@@ -1004,7 +1026,7 @@ if (run_ip_giel && exists("DALModelIPGIEL2017")) {
 
 
 
-Unlike Razorback Sucker, sex and release size had limited apparent influence on post-stocking detection probability for Bonytail. The range of release sizes for Bonytail was considerably narrower (approximately 240–290 mm) than for Razorback Sucker (350–500 mm), which reduces statistical power to detect a size effect. Despite being released at smaller sizes, initial post-release detection rates for Bonytail were higher than for the smallest Razorback Sucker, but long-term survival declined at a faster rate.
+Post-stocking survival for Bonytail was modeled for the 2017 initial stocking cohort only, due to insufficient sex data or inadequate post-release scanning windows in subsequent stocking events. Sex was a less dominant predictor of post-stocking detection probability for Bonytail than was observed for RASU, which may partly reflect the narrower release TL range (approximately 230–290 mm versus 350–500 mm for RASU) reducing the power to detect a TL-mediated sex difference, or it may reflect genuinely smaller sex-specific differences in vulnerability for this species. Detection probability at release TL values near the midpoint of the observed range was generally higher for Bonytail than for RASU at the lower end of that species' distribution. Pond-level differences in detection probability were evident in the model, consistent with variation in scanner coverage and pond characteristics.
 
 ```{r ip-giel-stocking-table}
 if (run_ip_giel) {
@@ -1071,7 +1093,9 @@ if (run_ip_giel) {
 
 
 
-The known survivor trajectories for Bonytail ponds show a steeper decline compared to Razorback Sucker ponds at Imperial Ponds. This pattern is consistent with the lower long-term survival observed in the post-stocking model and may reflect differences in habitat use, scanner coverage, or species-specific behavior.
+The minimum known survivor trajectories for Bonytail at IPCA Ponds 2, 5, and 6 show a steeper rate of decline among stocked fish than observed in the RASU ponds. However, natural recruitment into the PIT-tagged population has been substantial at all three GIEL ponds — a key distinction from RASU Ponds 3 and 4 — and the recruit contribution makes the overall population trajectory more complex than a simple stocking-and-attrition curve.
+
+Pond 6 had the most consistent recruitment record, with 311 recruits surviving the 90-day post-tagging period across seven cohort years (2017–2024), peaking at 108 fish in 2022. Pond 2 had 394 surviving recruits across five cohort years, including a pulse of 162 recruits in 2023 — the largest single-year recruit cohort at any IP pond. Pond 5 had earlier recruitment (84 recruits in 2017–2019) but little recruitment in subsequent years (5 recruits combined in 2022–2023), suggesting less favorable conditions for reproduction or juvenile survival in recent years. A mass BONY spawning event was observed in Pond 2 on April 20, 2018, consistent with the high natural recruitment subsequently documented there (Swatzell et al. 2020). Recruits at first capture ranged from 74 to 233 mm TL across BONY ponds (medians of 139, 208, and 183 mm for Ponds 2, 5, and 6, respectively) — at or below the minimum stocking TL of 234 mm — confirming their origin as naturally produced fish rather than previously stocked adults.
 
 
 
@@ -1113,7 +1137,7 @@ if (run_ip_giel && exists("BWEstimates")) {
 
 
 
-Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer census years than for Razorback Sucker, reflecting the faster population decline and correspondingly lower recapture rates in later years. Where estimates are available, they are generally consistent with the concurrent known survivor counts.
+Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer census years than for Razorback Sucker, reflecting the faster attrition of stocked fish and correspondingly lower recapture rates in later years. Where estimates are available, they are generally consistent with concurrent known survivor counts. Unlike RASU Ponds 3 and 4, the BONY ponds have experienced meaningful natural recruitment that partially offsets the loss of stocked fish; however, whether that recruitment is sufficient to sustain or grow the PIT-tagged population over the long term is not yet clear. The apparent decline in recruitment at Pond 5 in recent years and the variable year-to-year recruit counts at Ponds 2 and 6 indicate that continued monitoring and supplemental stocking are likely necessary to ensure viable population sizes are maintained at all three GIEL ponds.
 
 
 
@@ -1384,9 +1408,19 @@ The sex-based survival comparison reveals that females consistently showed highe
 
 
 
+Bureau of Reclamation. 2005. Design Workshop Final Report: Imperial National Wildlife Refuge – Imperial Native Fish Habitat Reconstruction. Lower Colorado Region, Boulder City, Nevada. July 11, 2005.
+
+Dowling, T.E., B.R. Kesner, P.C. Marsh, and collaborators. 2025. Genetic and Demographic Studies to Guide Conservation Management of Razorback Sucker and Bonytail in Off-Channel Habitats and the Lower Colorado River Mainstem, Final Report. Submitted to the Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada.
+
 Downey, A.M., B.R. Kesner, P.C. Reap, C.A. Pacey, and P.C. Marsh. 2025. Demographics and Monitoring of Repatriated Razorback Suckers in Lake Mohave. 2020–2024 Final Project Report. Submitted to the Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada, by Marsh & Associates, LLC, Tempe, Arizona, under contract No. 140R3020C0005.
 
+Finnegan, A.D. 2014. Imperial Ponds Renovation Plan – 2014. Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Lower Colorado Region, Boulder City, Nevada.
 
+Marsh, P.C., T.E. Dowling, T.F. Turner, M.J. Osborne, and B.R. Kesner. 2024. Maturation of an off-channel habitat concept to conserve native fishes in the Lower Colorado River. *Monographs of the Western North American Naturalist*, Vol. 15, Article 1.
+
+Minckley, W.L., P.C. Marsh, J.E. Brooks, J.E. Johnson, and B.L. Jensen. 2003. A conservation plan for native fishes of the lower Colorado River. *BioScience* 53(3):219–234.
 
 Ricker, W.E. 1975. Computation and interpretation of biological statistics of fish populations. Bulletin 191, Fisheries Research Board of Canada, Ottawa.
+
+Swatzell, J., C. Dodge, J. Lantow, B. Blasius, and J. Knowles. 2020. Imperial Ponds Conservation Area, 2018 Annual Report. Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada.
 
