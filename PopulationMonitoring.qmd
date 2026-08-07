@@ -30,6 +30,7 @@ packages(tidyr)
 packages(glmmTMB)
 packages(broom.mixed)
 packages(scales)
+packages(recapr)  # Chapman mark-recapture estimates and bootstrap CIs
 load("data/ReportingData.RData")
 # Helper: save a plot as PNG and return it for inline display
 save_plot <- function(plot_obj, filename, width = 8, height = 5) {
@@ -149,19 +150,13 @@ PIT scanning data were used to track the minimum number of tagged fish alive in 
 
 
 
-Annual population estimates for PIT-tagged adults were computed using the modified Petersen mark-recapture formula (Ricker 1975):
+Annual population estimates for PIT-tagged adults were computed using the Chapman (1951) modification of the Lincoln-Petersen mark-recapture estimator (Pierce et al., this volume):
 
+$$\hat{N} = \frac{(M+1)(C+1)}{R+1} - 1$$
 
+where M = number of marked individuals detected during the marking period, C = number of individuals detected during the capture period, and R = number of marked individuals detected during both periods (recaptures). The marking period was January through February; the capture period was October through April. To be eligible for marking, a fish must have been tagged ≥6 months prior to the marking period. To be eligible for capture, a fish must have been tagged ≥15 months prior to the start of the capture period. Census years with R ≤ 3 were excluded.
 
-$$\hat{N} = \frac{(M+1)(C+1)}{R+1}$$
-
-
-
-$$SE = \sqrt{\frac{(M+1)^2(C+1)(C-R)}{(R+2)(R+1)^2}}$$
-
-
-
-where M = number of marked individuals in the marking period, C = number of individuals captured (scanned) in the capture period, and R = number of marked individuals in the capture period. The marking period was January through February; the capture period was October through April. To be eligible for marking, a fish must have been tagged ≥6 months prior to the marking period. To be eligible for capture, a fish must have been tagged ≥15 months prior to the start of the capture period. Census years with R ≤ 3 were excluded. These criteria and the Peterson formula matched the standardized methods used for annual reporting to the LCR MSCP (Downey et al. 2025).
+The Chapman estimator is nearly unbiased and reduces the positive bias of the Lincoln-Petersen estimator, particularly at small sample sizes. It is exactly unbiased when the combined sample sizes meet or exceed the true population size (Sangnawakij et al. 2026). Ninety-five percent confidence intervals were computed using a parametric bootstrap implemented in the `recapr` R package (Tyers 2021): recaptures were resampled from a binomial distribution with parameters n = C and p = R/C, generating bootstrap distributions of N̂ that better capture the right skew of the estimator relative to normal-approximation methods, particularly when recapture numbers are small (Sangnawakij et al. 2026). These criteria and the Chapman formula matched the standardized methods used for annual reporting to the LCR MSCP (Downey et al. 2025).
 
 
 
@@ -380,6 +375,7 @@ Known survivor counts at Yuma Cove peaked following the initial 2013 stocking an
 #| fig-width: 6
 #| fig-height: 4
 if (run_yuma) {
+  set.seed(8472)
   # Rebuild mark-recapture estimates (BWMarkRecaptureEstimates.R logic)
   StudyBWContacts_MCR <- StudyBWContacts |>
     mutate(Backwater = ifelse(str_detect(Backwater, "IPCA"),
@@ -418,18 +414,16 @@ if (run_yuma) {
       by = c("Backwater", "Species", "CensusYear")
     ) |>
     filter(R > 3) |>
+    rowwise() |>
     mutate(
-      LowerBoundR  = qpois(0.025, R),
-      UpperBoundR  = qpois(0.975, R),
-      Estimate     = as.integer(((M + 1) * (C + 1)) / (R + 1)),
-      LowerQP95CI  = as.integer(((M + 1) * (C + 1)) / (UpperBoundR + 1)),
-      UpperQP95CI  = as.integer(((M + 1) * (C + 1)) / (LowerBoundR + 1)),
-      SE           = as.integer(sqrt(((M+1)^2*(C+1)*(C-R)) / ((R+2)*(R+1)^2))),
-      LowerN95CI   = as.integer(Estimate - 1.96 * SE),
-      UpperN95CI   = as.integer(Estimate + 1.96 * SE),
-      CensusDate   = as.Date(paste0(CensusYear, "-01-01"))
+      ci_boot  = list(ciChapman(n1 = M, n2 = C, m2 = R, method = "boot", bootreps = 10000)),
+      Estimate = round(ci_boot$Nhat),
+      LowerCI  = round(ci_boot$ciBoot[1]),
+      UpperCI  = round(ci_boot$ciBoot[2])
     ) |>
-    na.omit()
+    ungroup() |>
+    select(-ci_boot) |>
+    mutate(CensusDate = as.Date(paste0(CensusYear, "-01-01")))
   p_yuma_est <- ggplot(BWEstimates |> filter(Backwater == "YCB"),
                        aes(x = CensusDate, y = Estimate)) +
     geom_line(data = TotalCountYuma,
@@ -437,7 +431,7 @@ if (run_yuma) {
               linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
     geom_point(shape = 21, fill = "steelblue", color = "black",
                size = 3, stroke = 0.5) +
-    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+    geom_errorbar(aes(ymin = LowerCI, ymax = UpperCI),
                   width = 10, color = "steelblue") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y",
                  expand = expansion(add = c(30, 60))) +
@@ -773,7 +767,7 @@ if (run_ip_xyte && exists("BWEstimates")) {
               linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
     geom_point(shape = 21, fill = "steelblue", color = "black",
                size = 3, stroke = 0.5) +
-    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+    geom_errorbar(aes(ymin = LowerCI, ymax = UpperCI),
                   width = 10, color = "steelblue") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y",
                  expand = expansion(add = c(30, 60))) +
@@ -1118,7 +1112,7 @@ if (run_ip_giel && exists("BWEstimates")) {
               linewidth = 1.2, alpha = 0.25, inherit.aes = FALSE) +
     geom_point(shape = 21, fill = "steelblue", color = "black",
                size = 3, stroke = 0.5) +
-    geom_errorbar(aes(ymin = LowerN95CI, ymax = UpperN95CI),
+    geom_errorbar(aes(ymin = LowerCI, ymax = UpperCI),
                   width = 10, color = "steelblue") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y",
                  expand = expansion(add = c(30, 60))) +
@@ -1138,6 +1132,32 @@ if (run_ip_giel && exists("BWEstimates")) {
 
 
 Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer census years than for Razorback Sucker, reflecting the faster attrition of stocked fish and correspondingly lower recapture rates in later years. Where estimates are available, they are generally consistent with concurrent known survivor counts. Unlike RASU Ponds 3 and 4, the BONY ponds have experienced meaningful natural recruitment that partially offsets the loss of stocked fish; however, whether that recruitment is sufficient to sustain or grow the PIT-tagged population over the long term is not yet clear. The apparent decline in recruitment at Pond 5 in recent years and the variable year-to-year recruit counts at Ponds 2 and 6 indicate that continued monitoring and supplemental stocking are likely necessary to ensure viable population sizes are maintained at all three GIEL ponds.
+
+
+
+```{r export-estimates}
+#| label: export-estimates
+#| include: false
+if (exists("BWEstimates")) {
+  packages(openxlsx)
+  wb <- createWorkbook()
+  addWorksheet(wb, "Population Estimates")
+  est_export <- BWEstimates |>
+    select(Backwater, Species, CensusYear, M, C, R, Estimate, LowerCI, UpperCI) |>
+    rename(
+      `Census Year`         = CensusYear,
+      `Marked (M)`          = M,
+      `Captured (C)`        = C,
+      `Recaptures (R)`      = R,
+      `Population Estimate` = Estimate,
+      `Lower 95% CI`        = LowerCI,
+      `Upper 95% CI`        = UpperCI
+    ) |>
+    arrange(Species, Backwater, `Census Year`)
+  writeData(wb, "Population Estimates", est_export)
+  saveWorkbook(wb, paste0("output/PopulationEstimates_", format(Sys.Date(), "%d%b%Y"), ".xlsx"), overwrite = TRUE)
+}
+```
 
 
 
@@ -1410,6 +1430,8 @@ The sex-based survival comparison reveals that females consistently showed highe
 
 Bureau of Reclamation. 2005. Design Workshop Final Report: Imperial National Wildlife Refuge – Imperial Native Fish Habitat Reconstruction. Lower Colorado Region, Boulder City, Nevada. July 11, 2005.
 
+Chapman, D.G. 1951. Some properties of the hypergeometric distribution with applications to zoological censuses. University of California Publications in Statistics 1(7):131–160.
+
 Dowling, T.E., B.R. Kesner, P.C. Marsh, and collaborators. 2025. Genetic and Demographic Studies to Guide Conservation Management of Razorback Sucker and Bonytail in Off-Channel Habitats and the Lower Colorado River Mainstem, Final Report. Submitted to the Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada.
 
 Downey, A.M., B.R. Kesner, P.C. Reap, C.A. Pacey, and P.C. Marsh. 2025. Demographics and Monitoring of Repatriated Razorback Suckers in Lake Mohave. 2020–2024 Final Project Report. Submitted to the Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada, by Marsh & Associates, LLC, Tempe, Arizona, under contract No. 140R3020C0005.
@@ -1420,7 +1442,11 @@ Marsh, P.C., T.E. Dowling, T.F. Turner, M.J. Osborne, and B.R. Kesner. 2024. Mat
 
 Minckley, W.L., P.C. Marsh, J.E. Brooks, J.E. Johnson, and B.L. Jensen. 2003. A conservation plan for native fishes of the lower Colorado River. *BioScience* 53(3):219–234.
 
-Ricker, W.E. 1975. Computation and interpretation of biological statistics of fish populations. Bulletin 191, Fisheries Research Board of Canada, Ottawa.
+Pierce, B.L., R.R. Lopez, and N.J. Silvy. 2012. Chapter 11: Estimating Animal Abundance. Pages 284–321 *in* Silvy, N.J. (ed.), *The Wildlife Techniques Manual*, 7th ed. The Wildlife Society, Bethesda, MD.
+
+Sangnawakij, P., R. Lerdsuwansri, P. Pijitrattana, P. Schlattmann, A. Maruotti, and D. Böhning. 2026. Two-way capture-recapture methods with emphasis on the bootstrap. *Statistical Methods & Applications* 35:1–22. https://doi.org/10.1007/s10260-026-00840-5
 
 Swatzell, J., C. Dodge, J. Lantow, B. Blasius, and J. Knowles. 2020. Imperial Ponds Conservation Area, 2018 Annual Report. Lower Colorado River Multi-Species Conservation Program, Bureau of Reclamation, Boulder City, Nevada.
+
+Tyers, M. 2021. recapr: Two Event Mark-Recapture Experiment. R package version 0.4.4. https://CRAN.R-project.org/package=recapr. doi:10.32614/CRAN.package.recapr
 

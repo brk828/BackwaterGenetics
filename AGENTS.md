@@ -70,6 +70,10 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 | `documents/BackwaterFinalReport2020_Summary.md` | Summary of `backwater final report draft 16 Jan 2020.docx`. Covers AJ and DAN ephemeral ponds (not in current project), YCB, and early IPCA. Established sex-biased survival pattern; identified need for SNP parentage. |
 | `documents/IP Design Workshop 2005.pdf` | Bureau of Reclamation design workshop report for reconstructing the DU2 Ponds at INWR into what became the IPCA. Documents why original ponds failed and six-pond layout design goals. See `IP_DesignWorkshop2005_Summary.md`. |
 | `documents/IP_DesignWorkshop2005_Summary.md` | Summary of `IP Design Workshop 2005.pdf`. Foundational document for IPCA site design and rationale for river-disconnected, well-water-supplied ponds. |
+| `documents/Pierce et al. - Chpt 11 Estimating Animal Abundance.pdf` | Chapter 11 from *The Wildlife Techniques Manual* (8th ed.), Pierce, Lopez, and Silvy. Covers the full range of abundance estimation methods including the Chapman (1951) mark-recapture estimator. Primary reference for Chapman estimator context and formula in wildlife practice. See `PierceEtAl_ChapterAbundance_Summary.md`. |
+| `documents/PierceEtAl_ChapterAbundance_Summary.md` | Summary of Pierce et al. Chapter 11. Includes the Chapman estimator formula N̂ = (M+1)(C+1)/(R+1) − 1, its variance, assumptions, and notation mapping to the backwater project. |
+| `documents/Sanwnawakij et al 2026 - Two-way capture-recapture methods.pdf` | Sangnawakij et al. (2026), *Statistical Methods & Applications* 35:1–22. Primary reference supporting bootstrap confidence intervals for the Chapman estimator; compares imputed bootstrap (preferred), double bootstrap, and simple bootstrap methods. See `Sangnawakij_et_al_2026_Summary.md`. |
+| `documents/Sangnawakij_et_al_2026_Summary.md` | Summary of Sangnawakij et al. (2026). Covers Chapman estimator formula and bias, three bootstrap CI methods, simulation findings (imputed bootstrap best), and relevance to `recapr::ciChapman()`. Includes note on the special case R = C where Chapman formula simplifies to M. |
 | `documents/LCR MSCP 2021 - Imperial Ponds Conservation Area Annual Report 2018.pdf` | FY2018 IPCA annual report (Swatzell et al. 2020). First full monitoring year after 2017 initial stocking. Contains stocking table, FY18 population estimates (60–66% RASU survival at 21 months), and mass BONY spawning observation. See `IPCA_AnnualReport2018_Summary.md`. |
 | `documents/IPCA_AnnualReport2018_Summary.md` | Summary of the FY2018 IPCA annual report. Key reference for 2017 stocking conditions and first-year survival. |
 | `documents/LCR MSCP Imperial Ponds Renovation Plan 2014.pdf` | LCR MSCP plan (Finnegan 2014) for rotenone renovation of all six IPCA ponds in Dec 2014–Jan 2015 prior to 2017 stocking. See `IPRenovationPlan2014_Summary.md`. |
@@ -142,12 +146,13 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 | `SexSurvivalXYTEPlot.png` | PopulationMonitoring.qmd | Sex-based survival comparison — Razorback Sucker |
 | `SexSurvivalGIELPlot.png` | PopulationMonitoring.qmd | Sex-based survival comparison — Bonytail |
 | `TransfersWithContinuedScanning.csv` | PopulationMonitoring.qmd | Records for fish with suspect transfer entries retained in the known survival analysis |
+| `PopulationEstimates_<date>.xlsx` | PopulationMonitoring.qmd | All-site mark-recapture estimates (M, C, R, N̂, 95% bootstrap CI) exported each time the QMD is rendered. Filename includes the render date (e.g. `PopulationEstimates_07Aug2026.xlsx`); re-rendering on the same day overwrites that day's file. Sheet: "Population Estimates". |
 
 ---
 
 ## Analysis Rules and Caveats
 - **Post-stocking survival model:** Requires ≥5 stocked fish with known sex and total length. Excludes Yuma 2020 (no sex data) and Yuma 2015 (no male contacts). IP GIEL model only uses 2017 stocking cohort. Sex "J" (juvenile) is recoded to "U" before analysis.
-- **Mark-recapture estimates:** Computed only when recaptures R > 3. Marking period = Jan–Feb, capture period = Oct–Apr. Fish must be tagged ≥6 months before marking period.
+- **Mark-recapture estimates:** Computed only when recaptures R > 3. Marking period = Jan–Feb, capture period = Oct–Apr. Fish must be tagged ≥6 months before marking period. **Chapman (1951) estimator:** N̂ = (M+1)(C+1)/(R+1) − 1, the nearly unbiased modification of the Lincoln-Petersen estimator (see `PierceEtAl_ChapterAbundance_Summary.md`). **95% CI method:** Parametric bootstrap via `ciChapman(n1 = M, n2 = C, m2 = R, method = "boot", bootreps = 10000)` from the `recapr` R package (Tyers 2021). Recaptures are resampled from Binomial(n = C, p = R/C); bootstrap CIs outperform normal-approximation methods especially at low R. See `Sangnawakij_et_al_2026_Summary.md` for the theoretical basis and comparison of bootstrap methods. **Special case:** When R = C (all captured fish were marked), the Chapman formula simplifies algebraically to M, identical to the simple ratio MC/R = M — the −1 is present and correct; it is a mathematical identity. Applied consistently in `BWMarkRecaptureEstimates.R` and `PopulationMonitoring.qmd`.
 - **Known survivors:** A fish is counted as "alive" on a date if it was tagged before that date AND was scanned at least once ≥90 DAL.
 - **Genetics/offspring:** Only Yuma Cove XYTE and IP Pond 1 XYTE currently have parentage data from the Dowling lab. Skip this section for all other ponds.
 - **CJS model:** Only implemented for IP Pond 1 in BackwaterMCR.R. Requires MARK software (RMark package).
@@ -167,6 +172,32 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 
 ## Known Code Issues
 - `BackwaterMCR.R` references `StudyBWNFWGAnalysis` which does not exist in ReportingData.RData; likely should be `StudyBWAnalysis`. Also references column `Location` which should be `Backwater`. This script is incomplete/experimental.
+
+## Line Ending Policy
+
+All `.R` and `.qmd` files in this project **must use LF-only line endings** (Unix-style, `\n`). The files originated with Windows CRLF (`\r\n`) endings and were fully normalized to LF on 2026-08-07. The RStudio edit tool can silently reintroduce CRLF on Windows — if a string-replacement edit fails with "String not found" on any `.R` or `.qmd` file, CRLF re-contamination is the most likely cause.
+
+**After any editing session**, run this one-liner from the project root to re-normalize all `.R` and `.qmd` files:
+
+```python
+# Run in a bash or terminal pane from C:\GIT\BackwaterGenetics
+python3 -c "
+import glob
+for ext in ('*.R', '*.qmd'):
+    for path in glob.glob(ext):
+        data = open(path, 'rb').read()
+        if b'\r\n' in data:
+            open(path, 'wb').write(data.replace(b'\r\n', b'\n'))
+            print('Normalized:', path)
+"
+```
+
+To verify a single file is clean:
+```python
+python3 -c "data=open('FILE.R','rb').read(); print('CRLF count:', data.count(b'\r\n'))"
+```
+
+---
 
 ## Post-Edit File Format Checks
 
@@ -193,6 +224,7 @@ After editing any `.qmd` or `.R` file in this project, verify:
 ---
 
 ## Fixed Code Issues (resolved)
+- `PopulationMonitoring.qmd` (ip-pond1-offspring chunk, line ~863): `filter(Pond == "IPCA ( Pond 1)", ...)` had an extra space before "Pond", returning 0 rows and causing `facet_wrap` to error with "Faceting variables must have at least one value." Fixed to `"IPCA (Pond 1)"`.
 - `DataWrangling.R` (recent, formerly `KnownSurvival.R`): Added `SuspectTransfers` detection — fish flagged as transferred but with >1 month of post-transfer PIT contacts at the same backwater are retained in the known survival analysis. Group filters use `Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex`.
 - `PopulationMonitoring.qmd` cohort comparison (recent): Cohort comparison now correctly excludes transferred fish because `KnownSurvival*` objects upstream exclude them; the existing `filter(event == "stocking")` additionally ensures captured-and-tagged fish never appear in either cohort line.
 - `PopulationMonitoring.qmd` (recent): Added `suspect-transfers` chunk that writes `output/TransfersWithContinuedScanning.csv` and emits a bold note paragraph listing flagged tags when `SuspectTransfers` is non-empty.
