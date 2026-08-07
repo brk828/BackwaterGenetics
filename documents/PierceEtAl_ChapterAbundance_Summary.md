@@ -1,7 +1,7 @@
 # Summary: Pierce et al. — Chapter 11: Estimating Animal Abundance
 
 ## Full Citation
-Pierce, B.L., R.R. Lopez, and N.J. Silvy. Chapter 11: Estimating Animal Abundance. In: Silvy, N.J. (ed.), *The Wildlife Techniques Manual*, 8th ed. The Wildlife Society, Bethesda, MD.
+Pierce, B.L., R.R. Lopez, and N.J. Silvy. 2012. Chapter 11: Estimating Animal Abundance. Pages 284–321 *in* Silvy, N.J. (ed.), *The Wildlife Techniques Manual*, 7th ed. The Wildlife Society, Bethesda, MD.
 
 ---
 

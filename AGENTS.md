@@ -56,6 +56,31 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 
 ---
 
+## Reference Document Lookup Guide
+
+> **Standing instruction:** Whenever a document in the `documents/` folder is converted to a markdown summary at the user's request, automatically: (1) add a row to the **Key Reference Documents** table below with the PDF/DOCX filename, summary filename, and a brief description, and (2) add a row to this **Reference Document Lookup Guide** table with one or more trigger topics and the summary filename. Both updates must be made together before ending the response.
+
+When a request touches one of the topics below, **read the corresponding markdown file before responding**. These summaries contain the key facts, formulas, and citations needed to give accurate answers without having to re-parse the original PDFs or DOCX files.
+
+| Topic / Request Type | File(s) to read |
+|---|---|
+| Chapman estimator formula, mark-recapture methods, population estimates, wildlife abundance estimation | `documents/PierceEtAl_ChapterAbundance_Summary.md` |
+| Bootstrap confidence intervals for Chapman, `ciChapman()` behavior, CI coverage at small R | `documents/Sangnawakij_et_al_2026_Summary.md` |
+| Both of the above together (population estimate methods section of report) | Both `PierceEtAl_ChapterAbundance_Summary.md` and `Sangnawakij_et_al_2026_Summary.md` |
+| OCH concept, IPCA site history, BONY pond sizes, Marsh et al. 2024 citation | `documents/Marsh_et_al_2024_Summary.md` |
+| YCB population narrative, sex-biased survival history, 2013 stocking cohort | `documents/2025Report_YCB_PopulationMonitoring_Summary.md` |
+| IPCA population narrative, recruit counts by pond, IP RASU or BONY narrative text | `documents/2025Report_IP_PopulationMonitoring.md` |
+| IPCA site design rationale, 2005 design workshop, original pond failures, six-pond layout | `documents/IP_DesignWorkshop2005_Summary.md` |
+| 2014–2015 renovation, gap before 2017 stocking, well-water conversion | `documents/IPRenovationPlan2014_Summary.md` |
+| FY2018 annual report, 2017 stocking results, first-year survival at IPCA | `documents/IPCA_AnnualReport2018_Summary.md` |
+| YCB stocking history, harvest events, fish returned or removed by year | `documents/YumaBW_SummaryOfEvents_Summary.md` |
+| GT-seq panel, CKMR methods, genetic database (lcrgenetics.net), MSB tissue archive | `documents/2025FinalReport_Summary.md` |
+| 2019/2020 genetics report, microsatellite methods, AJ/DAN ephemeral ponds, early IPCA data | `documents/BackwaterFinalReport2020_Summary.md` |
+| Pierce et al. full citation or page range | `documents/PierceEtAl_ChapterAbundance_Summary.md` |
+| Sangnawakij et al. full citation or DOI | `documents/Sangnawakij_et_al_2026_Summary.md` |
+
+---
+
 ## Key Reference Documents
 
 | File | Description |
@@ -70,7 +95,7 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 | `documents/BackwaterFinalReport2020_Summary.md` | Summary of `backwater final report draft 16 Jan 2020.docx`. Covers AJ and DAN ephemeral ponds (not in current project), YCB, and early IPCA. Established sex-biased survival pattern; identified need for SNP parentage. |
 | `documents/IP Design Workshop 2005.pdf` | Bureau of Reclamation design workshop report for reconstructing the DU2 Ponds at INWR into what became the IPCA. Documents why original ponds failed and six-pond layout design goals. See `IP_DesignWorkshop2005_Summary.md`. |
 | `documents/IP_DesignWorkshop2005_Summary.md` | Summary of `IP Design Workshop 2005.pdf`. Foundational document for IPCA site design and rationale for river-disconnected, well-water-supplied ponds. |
-| `documents/Pierce et al. - Chpt 11 Estimating Animal Abundance.pdf` | Chapter 11 from *The Wildlife Techniques Manual* (8th ed.), Pierce, Lopez, and Silvy. Covers the full range of abundance estimation methods including the Chapman (1951) mark-recapture estimator. Primary reference for Chapman estimator context and formula in wildlife practice. See `PierceEtAl_ChapterAbundance_Summary.md`. |
+| `documents/Pierce et al. - Chpt 11 Estimating Animal Abundance.pdf` | Chapter 11 from *The Wildlife Techniques Manual* (7th ed., 2012), Pierce, Lopez, and Silvy. Covers the full range of abundance estimation methods including the Chapman (1951) mark-recapture estimator. Primary reference for Chapman estimator context and formula in wildlife practice. See `PierceEtAl_ChapterAbundance_Summary.md`. |
 | `documents/PierceEtAl_ChapterAbundance_Summary.md` | Summary of Pierce et al. Chapter 11. Includes the Chapman estimator formula N̂ = (M+1)(C+1)/(R+1) − 1, its variance, assumptions, and notation mapping to the backwater project. |
 | `documents/Sanwnawakij et al 2026 - Two-way capture-recapture methods.pdf` | Sangnawakij et al. (2026), *Statistical Methods & Applications* 35:1–22. Primary reference supporting bootstrap confidence intervals for the Chapman estimator; compares imputed bootstrap (preferred), double bootstrap, and simple bootstrap methods. See `Sangnawakij_et_al_2026_Summary.md`. |
 | `documents/Sangnawakij_et_al_2026_Summary.md` | Summary of Sangnawakij et al. (2026). Covers Chapman estimator formula and bias, three bootstrap CI methods, simulation findings (imputed bootstrap best), and relevance to `recapr::ciChapman()`. Includes note on the special case R = C where Chapman formula simplifies to M. |
