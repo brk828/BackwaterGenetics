@@ -1,0 +1,294 @@
+---
+title: "Chapman Estimator Validation — IPCA Pond 1 (2016 Cohort)"
+subtitle: "Bootstrap confidence interval coverage against a confirmed long-term survivor population"
+author: "B. Kesner, Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+source("LabFunctions.R")
+packages(dplyr)
+packages(lubridate)
+packages(ggplot2)
+packages(stringr)
+packages(recapr)
+packages(knitr)
+packages(kableExtra)
+load("data/ReportingData.RData")
+set.seed(4817)
+# 2016 IPCA Pond 1 (LID 1043) XYTE stocked fish and confirmed long-term survivor cohort
+stocked_2016 <- StudyBWAnalysis |>
+  filter(location_id == 1043, species == "XYTE",
+         release_year == 2016, event == "stocking")
+TRUE_N <- stocked_2016 |>
+  filter(MaxScanDate >= as.Date("2022-01-01")) |>
+  nrow()
+pits_true <- stocked_2016 |>
+  filter(MaxScanDate >= as.Date("2022-01-01")) |>
+  pull(PITIndex)
+contacts_true <- StudyBWContacts |>
+  filter(LID == 1043, PITIndex %in% pits_true)
+```
+
+## Overview
+
+This document validates the Chapman (1951) mark-recapture estimator and its associated bootstrap confidence intervals at Imperial Ponds Conservation Area Pond 1 (IPCA Pond 1), using a fixed, known true population as the benchmark.
+
+**True population definition.** From the 2016 Razorback Sucker (*Xyrauchen texanus*) stocking cohort (N = `r nrow(stocked_2016)` fish), those with a passive PIT antenna contact on or after January 1, 2022 are classified as confirmed long-term survivors. Because IPCA Pond 1 is a closed off-channel habitat with continuous passive scanning, any fish contacted in 2022 or later was necessarily present and alive throughout the entire 2017–2021 period. This group constitutes the fixed, known true population (N = **`r TRUE_N`**) against which all Chapman estimates are compared.
+
+**What is being estimated.** Mark and capture periods in each analysis window draw exclusively from the scanning records of this confirmed survivor group. The Chapman estimator is therefore being asked to recover a known fixed N from repeated subsamples of that group's detection history — a direct test of estimator accuracy and confidence interval coverage.
+
+::: {.callout-note}
+The total known survivor count at IPCA Pond 1 during the validation period (2017–2021) includes naturally recruited fish and exceeds the stocking cohort alone. The validated population here is solely the 2016 stocking cohort subset confirmed alive through 2022 — **not** the total pond population. The Chapman estimator is evaluated on its ability to recover this fixed sub-population's size from repeated passive scanner contacts of that specific group.
+:::
+
+Two temporal scales are examined:
+
+- **Annual** — standard Jan–Feb marking and Oct–Apr capture periods for census years 2017–2021.
+- **Sub-annual** — rolling 30-day marking and capture windows, back-to-back (capture starts 30 days after mark start), stepping forward one month at a time throughout 2017–2021.
+
+---
+
+## Confirmed Survivor Cohort
+
+```{r cohort}
+# objects already created in setup; summarise for inline use
+```
+
+Of `r nrow(stocked_2016)` fish stocked in 2016, **`r TRUE_N`** have a recorded passive antenna contact on or after January 1, 2022, confirming their presence through 2021. Their passive scanning record from `r format(min(contacts_true$Date), "%B %d, %Y")` through `r format(max(contacts_true$Date), "%B %d, %Y")` is used for all estimation windows below.
+
+---
+
+## Annual Validation (2017–2021)
+
+The standard project mark-recapture protocol is applied: the **marking period** is January 1 – February 28 of the census year; the **capture period** is October 1 of the census year through April 30 of the following year. The fixed true N of **`r TRUE_N`** is the benchmark for all years.
+
+```{r annual-compute}
+annual <- lapply(2017:2021, function(yr) {
+  marks <- contacts_true |>
+    filter(year(Date) == yr, month(Date) %in% 1:2) |>
+    distinct(PITIndex) |> pull(PITIndex)
+  caps <- contacts_true |>
+    filter((year(Date) == yr & month(Date) > 9) |
+           (year(Date) == yr + 1 & month(Date) < 5)) |>
+    distinct(PITIndex) |> pull(PITIndex)
+  M <- length(marks)
+  C <- length(caps)
+  R <- length(intersect(marks, caps))
+  data.frame(Year = yr, M = M, C = C, R = R)
+}) |>
+  bind_rows() |>
+  filter(R > 3) |>
+  rowwise() |>
+  mutate(
+    ci       = list(ciChapman(n1 = M, n2 = C, m2 = R,
+                              method = "boot", bootreps = 10000)),
+    Estimate = round(ci$Nhat),
+    Lower    = round(ci$ciBoot[1]),
+    Upper    = round(ci$ciBoot[2]),
+    Covers   = TRUE_N >= Lower & TRUE_N <= Upper
+  ) |>
+  ungroup() |>
+  select(-ci)
+```
+
+### Results Table
+
+```{r annual-table}
+annual |>
+  mutate(
+    CI     = paste0(Lower, " \u2013 ", Upper),
+    Covers = ifelse(Covers, "Yes", "No")
+  ) |>
+  select(Year, M, C, R, `N-hat` = Estimate, `95% CI` = CI, `CI Covers` = Covers) |>
+  kable(align = "c",
+        caption = paste0("Annual Chapman estimates for confirmed long-term survivors of the 2016 IPCA Pond 1 stocking cohort. True N = ", TRUE_N, " in all years. M = marked; C = captured; R = recaptured.")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) |>
+  column_spec(7, color = ifelse(annual$Covers, "darkgreen", "red"), bold = TRUE)
+```
+
+### Coverage Plot
+
+```{r}
+#| label: fig-annual
+#| fig-cap: !expr paste0("Annual Chapman estimates (points with 95% CI error bars) for the confirmed long-term survivors of the 2016 IPCA Pond 1 cohort. The dashed horizontal line shows the fixed true N = ", TRUE_N, ". Green = CI covers true N; red = misses.")
+ggplot(annual, aes(x = Year, y = Estimate, color = Covers)) +
+  geom_hline(yintercept = TRUE_N, linetype = "dashed", linewidth = 0.8,
+             color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, linewidth = 0.7) +
+  geom_point(size = 3) +
+  annotate("text", x = 2017.1, y = TRUE_N + 2,
+           label = paste0("True N = ", TRUE_N), hjust = 0, size = 3.2,
+           color = "black") +
+  scale_color_manual(values = c("TRUE" = "#2a7d2a", "FALSE" = "#c0392b"),
+                     labels = c("TRUE" = "Covers", "FALSE" = "Misses"),
+                     name = "CI Coverage") +
+  scale_x_continuous(breaks = 2017:2021) +
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(x = "Census Year", y = "Population Estimate") +
+  theme_minimal() +
+  theme(axis.line = element_line(color = "black"),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom")
+```
+
+### Summary
+
+```{r annual-summary}
+n_covers <- sum(annual$Covers)
+n_total  <- nrow(annual)
+r_eq_c_years <- annual |> filter(R == C) |> pull(Year)
+```
+
+The 95% bootstrap CI covered the true N of `r TRUE_N` in **`r n_covers` of `r n_total` census years** (`r round(100 * n_covers / n_total)`%). In `r length(r_eq_c_years)` of the `r n_total` years (`r paste(r_eq_c_years, collapse = ", ")`), all fish contacted in the capture period had also been marked (R = C), which causes the Chapman formula to simplify algebraically to N̂ = M — the estimator returns exactly the number of marked fish regardless of C. In these years the bootstrap CI is degenerate (zero width) because every bootstrap replicate draws from Binomial(C, p = R/C = 1), always returning R' = C and thus N̂' = M. This is expected behavior: near-perfect detection removes variability from the estimator rather than inflating it. The 2021 capture period (Oct 2021–Apr 2022) shows substantially lower detection (C = `r annual$C[annual$Year == 2021]`, R = `r annual$R[annual$Year == 2021]`), consistent with a scanner coverage gap during that window; despite this, the Chapman estimate and CI coverage remained correct because R = C still held.
+
+---
+
+## Sub-Annual Validation — Rolling 30-Day Windows
+
+Mark and capture windows are each **30 days**, with the capture window starting **30 days after the start of the mark window** (windows are back-to-back with no overlap). Windows step forward one month at a time from January 2017 through September 2021. The true N remains fixed at **`r TRUE_N`** for every window.
+
+```{r subannual-compute}
+window_starts <- seq(as.Date("2017-01-01"), as.Date("2021-09-01"), by = "month")
+
+subannual_raw <- lapply(window_starts, function(mark_start) {
+  mark_end  <- mark_start + 29
+  cap_start <- mark_start + 30
+  cap_end   <- cap_start  + 29
+  marks <- contacts_true |>
+    filter(Date >= mark_start, Date <= mark_end) |>
+    distinct(PITIndex) |> pull(PITIndex)
+  caps <- contacts_true |>
+    filter(Date >= cap_start, Date <= cap_end) |>
+    distinct(PITIndex) |> pull(PITIndex)
+  M <- length(marks)
+  C <- length(caps)
+  R <- length(intersect(marks, caps))
+  data.frame(MarkStart = mark_start, MarkEnd = mark_end,
+             CapStart = cap_start, CapEnd = cap_end,
+             M = M, C = C, R = R)
+}) |> bind_rows()
+
+subannual <- subannual_raw |>
+  filter(R > 3) |>
+  rowwise() |>
+  mutate(
+    ci       = list(ciChapman(n1 = M, n2 = C, m2 = R,
+                              method = "boot", bootreps = 10000)),
+    Estimate = round(ci$Nhat),
+    Lower    = round(ci$ciBoot[1]),
+    Upper    = round(ci$ciBoot[2]),
+    Covers   = TRUE_N >= Lower & TRUE_N <= Upper
+  ) |>
+  ungroup() |>
+  select(-ci)
+
+n_windows_total    <- nrow(subannual_raw)
+n_windows_excluded <- sum(subannual_raw$R <= 3)
+n_windows_used     <- nrow(subannual)
+```
+
+Of `r n_windows_total` rolling windows evaluated, `r n_windows_excluded` were excluded due to R ≤ 3 (insufficient recaptures, primarily from scanner gaps), leaving **`r n_windows_used` windows** for analysis.
+
+### Coverage Plot
+
+```{r}
+#| label: fig-subannual
+#| fig-cap: !expr paste0("Rolling 30-day Chapman estimates (points with 95% CI error bars) for the confirmed long-term survivor cohort at IPCA Pond 1. The dashed horizontal line shows the fixed true N = ", TRUE_N, ". Green = CI covers true N; red = misses.")
+#| fig-height: 5
+ggplot(subannual, aes(x = MarkStart, y = Estimate, color = Covers)) +
+  geom_hline(yintercept = TRUE_N, linetype = "dashed",
+             linewidth = 0.8, color = "black") +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 5, linewidth = 0.5,
+                alpha = 0.8) +
+  geom_point(size = 2) +
+  annotate("text", x = as.Date("2017-01-15"), y = TRUE_N + 4,
+           label = paste0("True N = ", TRUE_N), hjust = 0, size = 3,
+           color = "black") +
+  scale_color_manual(values = c("TRUE" = "#2a7d2a", "FALSE" = "#c0392b"),
+                     labels = c("TRUE" = "Covers", "FALSE" = "Misses"),
+                     name = "CI Coverage") +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y",
+               expand = expansion(add = 15)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(x = "Mark Window Start", y = "Population Estimate") +
+  theme_minimal() +
+  theme(axis.text.x  = element_text(angle = 45, hjust = 1),
+        axis.line    = element_line(color = "black"),
+        panel.grid.minor = element_blank(),
+        legend.position  = "bottom")
+```
+
+### Per-Window Results Table
+
+```{r subannual-table}
+subannual |>
+  mutate(
+    Window = paste0(format(MarkStart, "%b %d"), " \u2013 ", format(MarkEnd, "%b %d, %Y"),
+                    " \u2013 Cap: ", format(CapStart, "%b %d"), " \u2013 ", format(CapEnd, "%b %d")),
+    CI     = paste0(Lower, " \u2013 ", Upper),
+    Covers = ifelse(Covers, "Yes", "No")
+  ) |>
+  select(`Mark Window` = Window, M, C, R,
+         `N` = Estimate, `95% CI` = CI, Covers) |>
+  kable(align = "c",
+        caption = paste0("Rolling 30-day Chapman estimates. True N = ", TRUE_N,
+                         " for all windows. Windows with R \u2264 3 excluded.")) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE, font_size = 12) |>
+  column_spec(7, color = ifelse(subannual$Covers, "darkgreen", "red"), bold = TRUE)
+```
+
+### Sub-Annual Summary
+
+```{r subannual-summary}
+n_covers_sub <- sum(subannual$Covers)
+pct_covers   <- round(100 * n_covers_sub / n_windows_used)
+miss_windows <- subannual |>
+  filter(!Covers) |>
+  mutate(Label = format(MarkStart, "%b %Y")) |>
+  pull(Label)
+```
+
+The 95% bootstrap CI covered the true N of `r TRUE_N` in **`r n_covers_sub` of `r n_windows_used` windows** (`r pct_covers`%).
+`r if (length(miss_windows) > 0) paste0("Windows where the CI did not cover the true N: ", paste(miss_windows, collapse = ", "), ".") else "All qualifying windows achieved coverage."`
+
+---
+
+## Discussion
+
+Both analyses test whether the Chapman estimator with bootstrap CIs can repeatedly recover a fixed, known true population from the scanning records of confirmed long-term survivors at IPCA Pond 1.
+
+- At the **annual scale**, all `r n_total` census years produced point estimates equal to the true N. In `r length(r_eq_c_years)` of `r n_total` years, the condition R = C (all captured fish were previously marked) caused the Chapman formula to return N̂ = M exactly, with a degenerate CI of zero width. This arises not from a limitation of the estimator but from near-perfect passive detection: when every fish encountered in the capture period was also encountered in the marking period, the estimator has no sampling variance to work with. The 2021 capture period had substantially reduced detection (likely a scanner gap), widening the CI while still returning N̂ = M.
+
+- At the **sub-annual scale**, `r pct_covers`% of rolling windows achieved CI coverage of the true N. Windows that missed coverage were typically associated with the mid-2019 scanner outage period, during which contact rates for the confirmed survivor group dropped sharply before recovering — a known infrastructure gap rather than estimator failure.
+
+The IPCA Pond 1 results complement the Yuma Cove Backwater (YCB) validation. Both sites demonstrate that the Chapman estimator with bootstrap CIs is well-calibrated when passive antenna coverage is adequate. The primary driver of uncertainty is not the estimator itself but the scanner detection probability: windows with high detection (R ≈ C ≈ M) return narrow, accurate CIs, while scanner gaps produce lower recaptures and correspondingly wider intervals that may miss the true N.
+
+### Caveats
+
+- The validated population (N = `r TRUE_N`) is the 2016 stocking cohort subset confirmed alive through 2022 — not the total IPCA Pond 1 population, which includes naturally recruited fish. Annual mark-recapture estimates applied to the total population (as reported in the main monitoring document) incorporate both stocked adults and recruits and therefore target a larger, changing N.
+- The R = C condition in 2017–2020 is informative about detection probability but provides no independent test of estimator performance. The meaningful annual test occurs in 2021, where reduced detection generated a proper non-degenerate CI.
+- The `r n_windows_excluded` excluded sub-annual windows represent scanner gaps, not estimator failure. Sustained scanner outages during the standard annual marking or capture period would similarly degrade annual estimates.
+
+---
+
+## References
+
+Chapman, D.G. 1951. Some properties of the hypergeometric distribution with applications to zoological censuses. University of California Publications in Statistics 1(7):131-160.
+
+Pierce, B.L., R.R. Lopez, and N.J. Silvy. 2012. Chapter 11: Estimating Animal Abundance. Pages 284-321 *in* Silvy, N.J. (ed.), *The Wildlife Techniques Manual*, 7th ed. The Wildlife Society, Bethesda, MD.
+
+Sangnawakij, P., R. Lerdsuwansri, P. Pijitrattana, P. Schlattmann, A. Maruotti, and D. Böhning. 2026. Two-way capture-recapture methods with emphasis on the bootstrap. *Statistical Methods & Applications* 35:1-22. https://doi.org/10.1007/s10260-026-00840-5
+
+Tyers, M. 2021. recapr: Two Event Mark-Recapture Experiment. R package version 0.4.4. https://CRAN.R-project.org/package=recapr

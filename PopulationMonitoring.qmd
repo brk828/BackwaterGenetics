@@ -1140,21 +1140,42 @@ Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer cens
 #| include: false
 if (exists("BWEstimates")) {
   packages(openxlsx)
-  wb <- createWorkbook()
-  addWorksheet(wb, "Population Estimates")
-  est_export <- BWEstimates |>
+
+  # One consistent table style applied to every sheet -- no per-sheet color mixing
+  table_style <- "TableStyleMedium2"
+  species_label <- c(XYTE = "RASU", GIEL = "BONY")
+
+  est_full <- BWEstimates |>
     select(Backwater, Species, CensusYear, M, C, R, Estimate, LowerCI, UpperCI) |>
-    rename(
-      `Census Year`         = CensusYear,
-      `Marked (M)`          = M,
-      `Captured (C)`        = C,
-      `Recaptures (R)`      = R,
-      `Population Estimate` = Estimate,
-      `Lower 95% CI`        = LowerCI,
-      `Upper 95% CI`        = UpperCI
-    ) |>
-    arrange(Species, Backwater, `Census Year`)
-  writeData(wb, "Population Estimates", est_export)
+    rename(Lower95CI = LowerCI, Upper95CI = UpperCI) |>
+    arrange(Species, Backwater, CensusYear)
+
+  latest_est <- est_full |>
+    group_by(Backwater) |>
+    filter(CensusYear == max(CensusYear)) |>
+    ungroup() |>
+    arrange(Backwater)
+
+  add_estimate_sheet <- function(wb, sheet_name, data, drop_backwater = FALSE) {
+    if (drop_backwater) data <- select(data, -Backwater)
+    addWorksheet(wb, sheet_name)
+    writeDataTable(wb, sheet_name, data, tableStyle = table_style,
+                   withFilter = FALSE, bandedRows = TRUE)
+    setColWidths(wb, sheet_name, cols = seq_len(ncol(data)), widths = 15.71)
+  }
+
+  wb <- createWorkbook()
+  add_estimate_sheet(wb, "Summary (Latest)", latest_est)
+  add_estimate_sheet(wb, "All Backwaters", est_full)
+
+  for (bw in c("YCB", "IP1", "IP2", "IP3", "IP4", "IP5", "IP6")) {
+    bw_data <- est_full |> filter(Backwater == bw)
+    if (nrow(bw_data) == 0) next
+    species_code <- unique(bw_data$Species)[1]
+    sheet_label  <- paste0(bw, " (", species_label[[species_code]], ")")
+    add_estimate_sheet(wb, sheet_label, bw_data, drop_backwater = TRUE)
+  }
+
   saveWorkbook(wb, paste0("output/PopulationEstimates_", format(Sys.Date(), "%d%b%Y"), ".xlsx"), overwrite = TRUE)
 }
 ```
