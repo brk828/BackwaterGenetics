@@ -53,10 +53,65 @@ bw_label <- function(loc) {
     TRUE ~ str_c(str_sub(loc, 1, 2), str_sub(loc, -2, -2))
   )
 }
+# Adds vertical reference lines + count labels to a known-survival plot,
+# marking dates when known survivors were removed via transfer to another
+# location. reduction_df is a subset of TransferReductionSummary.
+transfer_layers <- function(reduction_df) {
+  if (nrow(reduction_df) == 0) return(NULL)
+  # Stagger label vjust for consecutive dates so closely-spaced transfers
+  # (e.g. two events a day apart) don't render on top of one another
+  reduction_df <- reduction_df |>
+    arrange(TransferDate) |>
+    mutate(label_vjust = -0.3 - 1.4 * ((row_number() - 1) %% 2))
+  list(
+    geom_vline(data = reduction_df, aes(xintercept = TransferDate),
+               linetype = "dotted", color = "grey40", linewidth = 0.4,
+               inherit.aes = FALSE),
+    geom_text(data = reduction_df,
+              aes(x = TransferDate, y = Inf, label = paste0("-", n),
+                  vjust = label_vjust),
+              angle = 90, hjust = 1.2, size = 2.6,
+              color = "grey30", inherit.aes = FALSE)
+  )
+}
+# Prose description of the transfer-driven reductions marked on a
+# known-survival plot; prints nothing if reduction_df has no rows
+describe_transfers <- function(reduction_df) {
+  if (nrow(reduction_df) == 0) return(invisible(NULL))
+  reduction_df <- reduction_df |> arrange(TransferDate)
+  items <- paste0(
+    format(reduction_df$TransferDate, "%B %d, %Y"), " (", reduction_df$Backwater, ", ",
+    reduction_df$n, " known survivor", ifelse(reduction_df$n > 1, "s", ""),
+    " transferred to ", reduction_df$TransferLocation, ")"
+  )
+  cat(
+    "\n**Known-survivor reductions from transfers:** the dotted vertical lines",
+    "in the figure above mark dates when known survivors were removed from the",
+    "backwater via transfer rather than mortality:",
+    paste(items, collapse = "; "), ".\n"
+  )
+}
 # Minimum sample size thresholds
 MIN_FISH_POP_MON <- 30   # minimum unique scanned fish to include population monitoring
 MIN_STOCKING_MODEL <- 10  # minimum fish with sex+TL for post-stocking survival model
 packages(kableExtra)
+# kableExtra's kable_styling()/add_header_above() emit raw HTML, which pandoc
+# rejects when the target format is docx ("Functions that produce HTML output
+# found in document targeting docx output"). Apply that styling only when
+# rendering to HTML; for docx, fall back to a plain knitr::kable() (no
+# striping/grouped header -- docx doesn't support add_header_above() without
+# additional flextable/officer machinery, which is out of scope here).
+apply_table_style <- function(kbl_obj, header_above = NULL) {
+  if (knitr::is_html_output()) {
+    kbl_obj <- kbl_obj |>
+      kable_styling(bootstrap_options = c("striped", "condensed"),
+                    full_width = FALSE, position = "left")
+    if (!is.null(header_above)) {
+      kbl_obj <- kbl_obj |> add_header_above(header_above)
+    }
+  }
+  kbl_obj
+}
 # Helper: build a wide stocking x survival summary table (one row per group)
 build_stocking_table <- function(data, group_cols) {
   all_sex <- c("F", "M", "U")
@@ -310,9 +365,7 @@ if (run_yuma) {
       align     = c("c", rep("c", 8)),
       caption   = "Razorback Sucker stocked and survived (≥90 DAL) at Yuma Cove Backwater by stocking year and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
     ) |>
-    kable_styling(bootstrap_options = c("striped", "condensed"),
-                  full_width = FALSE, position = "left") |>
-    add_header_above(c(" " = 1, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+    apply_table_style(c(" " = 1, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
 }
 ```
 
@@ -340,8 +393,10 @@ if (run_yuma) {
     mutate(Count = replace_na(Count, 0))
   SurvivorCountsYuma$sex <- factor(SurvivorCountsYuma$sex,
                                     levels = c("F", "M", "U"))
+  yuma_transfers <- TransferReductionSummary |> filter(Backwater == "Yuma Cove")
   p_yuma_ks <- ggplot(SurvivorCountsYuma, aes(x = Date, y = Count)) +
     geom_line(aes(color = sex, linetype = sex)) +
+    transfer_layers(yuma_transfers) +
     scale_x_date(date_breaks = "1 month",
                  labels = function(x) ifelse(month(x) == 1,
                                              format(x, "%Y"), "")) +
@@ -357,6 +412,12 @@ if (run_yuma) {
   save_plot(p_yuma_ks, "KnownSurvivalPlotYuma.png", width = 8, height = 5)
   p_yuma_ks
 }
+```
+
+```{r yuma-transfer-note}
+#| label: yuma-transfer-note
+#| results: asis
+if (run_yuma) describe_transfers(yuma_transfers)
 ```
 
 
@@ -691,9 +752,7 @@ if (run_ip_xyte) {
       align     = c("l", "c", rep("c", 8)),
       caption   = "Razorback Sucker stocked and survived (≥90 DAL) at IPCA ponds by pond, stocking year, and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
     ) |>
-    kable_styling(bootstrap_options = c("striped", "condensed"),
-                  full_width = FALSE, position = "left") |>
-    add_header_above(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+    apply_table_style(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
 }
 ```
 
@@ -719,8 +778,11 @@ if (run_ip_xyte) {
            Backwater = bw_label(location))
   SurvivorCountsIPXYTE$sex <- factor(SurvivorCountsIPXYTE$sex,
                                       levels = c("F", "M", "U"))
+  ipxyte_transfers <- TransferReductionSummary |>
+    filter(Backwater %in% unique(SurvivorCountsIPXYTE$Backwater))
   p_ipxyte_ks <- ggplot(SurvivorCountsIPXYTE, aes(x = Date, y = Count)) +
     geom_line(aes(color = sex, linetype = sex)) +
+    transfer_layers(ipxyte_transfers) +
     scale_x_date(date_breaks = "1 month",
                  labels = function(x) ifelse(month(x) == 1,
                                              format(x, "%Y"), "")) +
@@ -738,6 +800,12 @@ if (run_ip_xyte) {
   save_plot(p_ipxyte_ks, "KnownSurvivalPlotIPXYTE.png", width = 8, height = 7)
   p_ipxyte_ks
 }
+```
+
+```{r ip-xyte-transfer-note}
+#| label: ip-xyte-transfer-note
+#| results: asis
+if (run_ip_xyte) describe_transfers(ipxyte_transfers)
 ```
 
 
@@ -1036,9 +1104,7 @@ if (run_ip_giel) {
       align     = c("l", "c", rep("c", 8)),
       caption   = "Bonytail stocked and survived (≥90 DAL) at IPCA ponds by pond, stocking year, and sex. Survival columns show count followed by percent survival in parentheses. U = unknown sex."
     ) |>
-    kable_styling(bootstrap_options = c("striped", "condensed"),
-                  full_width = FALSE, position = "left") |>
-    add_header_above(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
+    apply_table_style(c(" " = 2, "Stocked" = 4, "Survived (≥90 DAL)" = 4))
 }
 ```
 
@@ -1064,8 +1130,11 @@ if (run_ip_giel) {
            Backwater = bw_label(location))
   SurvivorCountsIPGIEL$sex <- factor(SurvivorCountsIPGIEL$sex,
                                       levels = c("F", "M", "U"))
+  ipgiel_transfers <- TransferReductionSummary |>
+    filter(Backwater %in% unique(SurvivorCountsIPGIEL$Backwater))
   p_giel_ks <- ggplot(SurvivorCountsIPGIEL, aes(x = Date, y = Count)) +
     geom_line(aes(color = sex, linetype = sex)) +
+    transfer_layers(ipgiel_transfers) +
     scale_x_date(date_breaks = "1 month",
                  labels = function(x) ifelse(month(x) == 1,
                                              format(x, "%Y"), "")) +
@@ -1083,6 +1152,12 @@ if (run_ip_giel) {
   save_plot(p_giel_ks, "KnownSurvivalPlotIPGIEL.png", width = 8, height = 7)
   p_giel_ks
 }
+```
+
+```{r ip-giel-transfer-note}
+#| label: ip-giel-transfer-note
+#| results: asis
+if (run_ip_giel) describe_transfers(ipgiel_transfers)
 ```
 
 
@@ -1322,12 +1397,14 @@ if (nrow(SuspectTransfers) > 0) {
     "\n**Note on suspect transfer records:** The following PIT tag",
     if (nrow(SuspectTransfers) > 1) "s were" else " was",
     "found in the NFWG database with a transfer record but",
-    if (nrow(SuspectTransfers) > 1) "continued" else "continued",
-    "to generate PIT scanner contacts at the same backwater across multiple",
-    "months after the listed transfer date.",
-    if (nrow(SuspectTransfers) > 1) "These tags were" else "This tag was",
-    "retained in the known survival analysis because the sustained scanning",
-    "record indicates the fish remained in — or returned to — the backwater.",
+    "continued to generate PIT scanner contacts at the same backwater across",
+    "multiple months after the listed transfer date, suggesting the listed",
+    "transfer date is inaccurate and the fish remained in — or returned to —",
+    "the backwater. (Transferred fish are not excluded from the known survival",
+    "figures above; each is counted as a survivor only through its last local",
+    "contact date, so these flagged tags simply continue contributing to the",
+    "known-survivor count past their listed transfer date, which is expected",
+    "given the sustained scanning record.)",
     "Tag details:",
     paste(tag_details, collapse = "; "),
     "A record of these cases has been written to",

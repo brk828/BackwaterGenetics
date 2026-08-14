@@ -282,7 +282,16 @@ StudyBWAnalysis <- StudyBWNFWG %>%
          SurvivedFY25 = ifelse(!is.na(MaxScanDate) & 
                                  MaxScanDate > as.Date("2025-09-30"), 1, 0),
          MaxScanDate = if_else(is.na(MaxScanDate), first_date, MaxScanDate)) %>%
-  left_join(StudyBWTransfersAnalysis %>% select(PITIndex, Transfer, TransferDate), by = "PITIndex") %>%
+  left_join(
+    StudyBWTransfersAnalysis %>%
+      # "Imperial NWR Pond 3" is a legacy name for the same backwater now
+      # labeled "IPCA (Pond 3)"; normalize so the join below matches this
+      # transfer only to the row for the backwater the fish actually left
+      # (see the documented pond-to-pond transfer 003C06F28D)
+      mutate(Backwater = recode(Backwater, "Imperial NWR Pond 3" = "IPCA (Pond 3)")) %>%
+      select(PITIndex, Backwater, Transfer, TransferDate, TransferLocation),
+    by = c("PITIndex", "location" = "Backwater")
+  ) %>%
   mutate(Transfer = ifelse(is.na(Transfer), 0, 1))
 
 # Recode juvenile sex to unknown for consistency across all survival objects
@@ -403,6 +412,9 @@ saveWorkbook(wb, paste0("output/BackwaterSummary",
 
 # Identify suspect transfer records: fish flagged as transferred but with
 # continued PIT scanner contacts spanning >1 calendar month after transfer date.
+# This is now purely diagnostic (flags likely inaccurate transfer dates in the
+# NFWG database) -- it no longer affects which fish are retained in the known
+# survival groups below, since transferred fish are no longer excluded there.
 SuspectTransfers <- StudyBWTransfersAnalysis |>
   select(PITIndex, Backwater, TransferDate, TransferLocation, TransferYear) |>
   inner_join(
@@ -418,18 +430,43 @@ SuspectTransfers <- StudyBWTransfersAnalysis |>
   ) |>
   filter(PostTransferMonths > 1)
 
-# Separate study groups; confirmed transfers excluded, suspect transfers retained
+# Known-survivor fish that were transferred out of a backwater. These fish are
+# NOT excluded from the known survival groups below: MaxScanDate/MaxDAL are
+# already scoped to contacts within the fish's original backwater (see
+# ContactsSummary join above), so a transferred fish is only ever counted as a
+# known survivor through its last local contact date -- which falls at or near
+# TransferDate -- and then drops out of the daily count on its own. This table
+# exists purely for reporting the resulting reductions (dates/counts/
+# destinations) in text and figure annotations. Fish flagged in SuspectTransfers
+# are excluded here because their sustained post-transfer scanning record
+# indicates they were never actually removed from the backwater -- reporting
+# them as a reduction event would misrepresent the known-survival trajectory.
+KnownSurvivorTransfers <- StudyBWAnalysis %>%
+  filter(Transfer == 1, MaxDAL > SurvivalDAL,
+         !PITIndex %in% SuspectTransfers$PITIndex) %>%
+  mutate(Backwater = unname(ifelse(location_id == 592, "Yuma Cove",
+                            str_c(str_sub(location, 1, 2), str_sub(location, -2, -2))))) %>%
+  select(PITIndex, Backwater, location, location_id, species, sex, total_length,
+         first_date, MaxScanDate, MaxDAL, TransferDate, TransferLocation)
+
+# Summary used for text callouts and plot annotations: one row per
+# backwater/species/transfer date, with the number of known survivors removed
+TransferReductionSummary <- KnownSurvivorTransfers %>%
+  group_by(Backwater, species, TransferDate, TransferLocation) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  arrange(TransferDate)
+
+# Separate study groups; all fish that qualify by DAL are retained regardless
+# of Transfer status (transferred fish naturally drop out at their last local
+# contact date -- see KnownSurvivorTransfers above)
 StudyBWXYTEIP <- StudyBWAnalysis %>%
-  filter(location_id != 592, species == "XYTE", MaxDAL > SurvivalDAL,
-         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
+  filter(location_id != 592, species == "XYTE", MaxDAL > SurvivalDAL)
 
 StudyBWGIELIP <- StudyBWAnalysis %>%
-  filter(location_id != 592, species == "GIEL", MaxDAL > SurvivalDAL,
-         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
+  filter(location_id != 592, species == "GIEL", MaxDAL > SurvivalDAL)
 
 StudyBWYuma <- StudyBWAnalysis %>%
-  filter(location_id == 592, MaxDAL > SurvivalDAL,
-         Transfer == 0 | PITIndex %in% SuspectTransfers$PITIndex)
+  filter(location_id == 592, MaxDAL > SurvivalDAL)
 
 # Date sequences from first release to SurvivalDAL*4 days before today
 YumaMinReleaseDate   <- as.Date(min(StudyBWYuma$first_date))
@@ -591,6 +628,7 @@ save(StudyBWNFWG, StudyBWAnalysis, StudyBWEffort, StudyBWContacts, SurvivalDAL,
      StudyBWTransfersAnalysis, StudyBWGrowth,
      KnownSurvivalYuma, KnownSurvivalIPXYTE, KnownSurvivalIPGIEL,
      TotalCountYuma, TotalCountIPXYTE, TotalCountIPGIEL, SuspectTransfers,
+     KnownSurvivorTransfers, TransferReductionSummary,
      YumaAdditions, IPXYTEAdditions, IPGIELAdditions,
      YumaRemovals, IPXYTERemovals, IPGIELRemovals,
      file = "data/ReportingData.RData")
