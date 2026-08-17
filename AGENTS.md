@@ -5,7 +5,9 @@
 
 
 ## Project Overview
-Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonytail (GIEL) in two sets of backwater habitats along the lower Colorado River: Yuma Cove Backwater and Imperial Ponds California (IPCA 1–6). Analyses cover post-stocking survival, minimum known survivor counts, annual mark-recapture population estimates, and reproductive contribution from parentage genetics (Dowling lab). Managed by Brian Kesner, Marsh & Associates.
+Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonytail (GIEL) in two backwater habitat sites on the lower Colorado River system: Yuma Cove Backwater and Imperial Ponds California (IPCA 1–6). Analyses cover post-stocking survival, minimum known survivor counts, annual mark-recapture population estimates, and reproductive contribution from parentage genetics (Dowling lab). Managed by Brian Kesner, Marsh & Associates.
+
+> **Geography note (corrected 2026-08-17):** Yuma Cove Backwater is **not** near Yuma, Arizona. It is a cove on **Lake Mohave** (the reservoir between Hoover and Davis dams on the Colorado River, between Boulder City, NV and Laughlin, NV), closed off from the mainstem reservoir by an earthen berm built across the mouth of the cove — hence "backwater." Only IPCA (on the Imperial National Wildlife Refuge) is actually near Yuma, AZ.
 
 ---
 
@@ -20,7 +22,7 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 ## Study Locations
 | Location Name | LID | Species |
 |---|---|---|
-| Yuma Cove backwater | 592 | XYTE |
+| Yuma Cove backwater (Lake Mohave, NV — see geography note above; not near Yuma, AZ) | 592 | XYTE |
 | IPCA (Pond 1) | 1043 | XYTE |
 | IPCA (Pond 2) | 1044 | GIEL |
 | IPCA (Pond 3) | 1045 | XYTE |
