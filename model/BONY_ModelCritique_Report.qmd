@@ -1,0 +1,278 @@
+---
+title: "Bonytail (GIEL) Off-Channel Model: Data Support for the Proposed IPM Critique"
+subtitle: "Figures illustrating data limitations referenced in the critique of the proposed Bonytail integrated population model"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(scales)
+library(knitr)
+library(kableExtra)
+theme_set(theme_minimal(base_size = 12))
+apply_table_style <- function(kbl_obj, header_above = NULL) {
+  if (knitr::is_html_output()) {
+    out <- kableExtra::kable_styling(kbl_obj, bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+    if (!is.null(header_above)) out <- kableExtra::add_header_above(out, header_above)
+    return(out)
+  }
+  kbl_obj
+}
+load("../data/ReportingData.RData")
+DieOffs <- read_csv("../data/BWDieOffEvents.csv", show_col_types = FALSE) |>
+  mutate(StartDate = as.Date(paste0(StartMonth, "-01")), EndDate = as.Date(paste0(EndMonth, "-01")) + months(1) - days(1))
+GIELDieOffs <- DieOffs |> filter(Species == "GIEL") |> mutate(Pond = case_when(Backwater == "IPCA (Pond 2)" ~ "IP2", Backwater == "IPCA (Pond 5)" ~ "IP5", Backwater == "IPCA (Pond 6)" ~ "IP6"))
+e_mcmc <- new.env()
+load("../data/BWRobustDesign_MCMC_giel.RData", envir = e_mcmc)
+comb <- as.matrix(do.call(rbind, e_mcmc$rd_samples))
+e_rec <- new.env()
+load("../data/GIEL_scratch_data.RData", envir = e_rec)
+RecruitIndex <- e_rec$RecruitIndex
+FIRST_FY <- e_rec$FIRST_FY
+PondTableGIEL <- e_rec$PondTable
+pond_lab <- c("1" = "IP2", "2" = "IP5", "3" = "IP6")
+```
+
+## Purpose
+
+`documents/Bonytail Model Critique.docx` compiles an assessment (this assistant plus a supporting
+AI) of the externally-proposed Bonytail integrated population model (Sound Science LLC, draft 10
+July 2026) against our own GIEL joint robust-design model results and the Lake Havasu open-water
+telemetry precedent. That document is text-only. This report adds figures built from data and
+model results already on hand — the completed GIEL-only fit
+(`data/BWRobustDesign_MCMC_giel.RData`), the underlying PIT-scan and netting records
+(`data/ReportingData.RData`), the recorded die-off windows (`data/BWDieOffEvents.csv`), and a
+scratch recruit-density build (`data/GIEL_scratch_data.RData`) from the 2026-09-10 GIEL structure
+assessment — to illustrate, rather than just assert, where the current data support a simpler
+model than the one proposed. **No new model fitting was performed for this report**; every figure
+below is derived from existing fits or directly from the raw monitoring data.
+
+See `model/BONY_ProposedIPM_Critique.md` for the full structural critique this report supports, and
+`documents/BONY_Proposed_IPM_Summary.md` for a neutral summary of the proposed IPM itself.
+
+## 1. Where the proposed IPM aligns with the data: ponds sustain fish, open water does not
+
+The proposed IPM's split between an off-channel (OCH) state-space model and an open-water CJS
+survival model reflects a real contrast in this system: bonytail persist for years in the IPCA
+ponds, subject to occasional catastrophic but discrete losses, whereas Lake Havasu open-water
+releases showed rapid, near-total mortality regardless of predator assemblage or fish size
+(`documents/C64_2016_LakeHavasu_Summary.md`). The known-alive trajectories below show the pond-side
+half of that contrast directly: **Pond 6 (IP6) tracks a fairly stable seasonal pattern with no
+catastrophic event, while Ponds 2 and 5 (IP2, IP5) each show a single sharp, well-defined collapse**
+matching the pump-failure die-offs documented in Marsh et al. (2024) and pinned to specific months
+here.
+
+```{r fig-known-alive, fig.width=9, fig.height=6}
+#| fig-cap: "Daily known-alive bonytail count by pond, 2017-2025. Shaded bands mark the confirmed die-off windows (IP5 Jan-Sep 2020, IP2 Jan-Jul 2022) pinned from this same known-alive series. IP6 has no recorded die-off."
+ka <- TotalCountIPGIEL |> filter(sex == "Total") |> mutate(Backwater = factor(Backwater, levels = c("IP2", "IP5", "IP6")))
+ggplot(ka, aes(x = Date, y = Count)) +
+  geom_rect(data = GIELDieOffs, aes(xmin = StartDate, xmax = EndDate, ymin = -Inf, ymax = Inf), inherit.aes = FALSE, fill = "red", alpha = 0.15) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~Backwater, ncol = 1, scales = "free_y") +
+  labs(x = NULL, y = "Known-alive tagged fish (count)") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+```
+
+The proposed IPM's own text attributes both events to well-pump failure ("operational, not
+environmental"), and our `dE`/`Evt` mechanism (a dated, per-pond survival offset) is a direct,
+explicit implementation of that same idea, in place of a diffuse year random effect. Sections 2c
+and the model-vs-floor comparison below examine how well that explicit mechanism actually recovers
+the true magnitude of these crashes.
+
+## 2. Where the proposed IPM's complexity outruns the data
+
+### 2a. Stage structure: the data support one size break, not three or four
+
+The proposed IPM carries multiple early wild sub-stages (S1-2, S2-4, S3-4, S4-4), an architecture
+that mirrors the three-stage density-dependent model built for razorback sucker at Yuma Cove. For
+bonytail, re-sighting of netting-tagged juveniles (n = 1,438, IP2/IP5/IP6, 2017-2024) shows a single
+break, at the pond model's existing 250 mm stage threshold — not a second break near 350 mm as in
+the razorback sucker model.
+
+```{r fig-size-resight, fig.width=6, fig.height=4}
+#| fig-cap: "Proportion of netting-tagged bonytail juveniles re-sighted >=365 days later, by size class at tagging (n = 1,438). Error bars are 95% Wilson confidence intervals; point size scales with sample size."
+last_con <- StudyBWContacts |>
+  group_by(LID, PITIndex) |>
+  summarise(last_con = max(Date), .groups = "drop") |>
+  rename(location_id = LID)
+giel_ponds_nm <- c("IPCA (Pond 2)", "IPCA (Pond 5)", "IPCA (Pond 6)")
+resight_df <- StudyBWNFWG |>
+  filter(species == "GIEL", event == "capture", disposition == "released", FirstRecord == "yes", location %in% giel_ponds_nm) |>
+  left_join(last_con, by = c("location_id", "PITIndex")) |>
+  mutate(
+    reseen = replace_na(last_con >= min_date + 365, FALSE),
+    cls = cut(total_length, breaks = c(-Inf, 250, 350, Inf), labels = c("<250 mm", "250-349 mm", ">=350 mm"))
+  )
+size_summ <- resight_df |>
+  filter(!is.na(cls)) |>
+  group_by(cls) |>
+  summarise(n = n(), reseen_n = sum(reseen), .groups = "drop") |>
+  mutate(bt = purrr::map2(reseen_n, n, ~ broom::tidy(binom.test(.x, .y)))) |>
+  unnest(bt) |>
+  select(cls, n, reseen_n, estimate, conf.low, conf.high)
+ggplot(size_summ, aes(x = cls, y = estimate)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, size = n)) +
+  scale_size_continuous(range = c(0.4, 1.2), guide = "none") +
+  scale_y_continuous(labels = percent, limits = c(0, NA)) +
+  labs(x = "Size class at tagging", y = "Proportion re-sighted >=365 days later")
+```
+
+```{r size-glm}
+m_size <- glm(reseen ~ factor(FYf) + cls, data = resight_df |> mutate(FYf = if_else(month(min_date) > 9, year(min_date) + 1, year(min_date))), family = binomial)
+b <- coef(m_size); V <- vcov(m_size)
+diff_est <- b["cls>=350 mm"] - b["cls250-349 mm"]
+diff_se <- sqrt(V["cls>=350 mm", "cls>=350 mm"] + V["cls250-349 mm", "cls250-349 mm"] - 2 * V["cls>=350 mm", "cls250-349 mm"])
+z_val <- diff_est / diff_se
+p_val <- 2 * pnorm(-abs(z_val))
+```
+
+Both the 250-349 mm and >=350 mm classes clearly out-survive the <250 mm class, but a logistic
+model controlling for stocking/tagging-cohort year (FY) finds no difference between them
+(log-odds difference = `r round(diff_est, 2)` +/- `r round(diff_se, 2)`, z = `r round(z_val, 2)`,
+p = `r round(p_val, 2)`). A three- or four-stage architecture built around finer size distinctions
+above 250 mm is not identifiable from this re-sighting pattern.
+
+### 2b. Covariate complexity vs. data sufficiency
+
+Two separate lines of evidence argue against adding covariate slopes (environmental, density, or
+otherwise) to bonytail survival right now: recruitment is too sparse and skewed to fit a
+density-dependent term, and even the pond-seasons without any density signal show wide,
+unpatterned swings in survival that a shared covariate slope would need to explain.
+
+```{r fig-recruit-density, fig.width=8, fig.height=4}
+#| fig-cap: "Recruit density (untagged juveniles handled at fall netting, per acre) by pond and season. Most pond-seasons show zero or near-zero recruit density; IP2's FY2024 value (24.1/acre) is an order of magnitude above every other observation."
+season_labels <- FIRST_FY + 0:9
+rd_plot <- RecruitIndex |> mutate(Pond = pond_lab[as.character(pond)], FY = factor(season_labels[season], levels = paste0("FY", season_labels))[match(season, 1:10)], FYlab = paste0("FY", season_labels[season]))
+rd_plot$FYlab <- factor(rd_plot$FYlab, levels = paste0("FY", season_labels))
+ggplot(rd_plot, aes(x = FYlab, y = rec_density)) +
+  geom_col() +
+  facet_wrap(~Pond, ncol = 1) +
+  labs(x = NULL, y = "Recruit density (per acre)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r fig-survival-floor-vs-model, fig.width=9, fig.height=7}
+#| fig-cap: "Empirical annual adult survival floor (fraction of adults known alive at one October census re-sighted after the next; open circles) vs. the fitted joint robust-design model's event-adjusted realized annual survival (filled points with 95% credible interval). Red shading marks the two confirmed die-off pond-seasons (IP5 FY2020, IP2 FY2022)."
+locs <- c("IP2" = "IPCA (Pond 2)", "IP5" = "IPCA (Pond 5)", "IP6" = "IPCA (Pond 6)")
+floor_tbl <- expand.grid(pond = names(locs), y = 1:9, stringsAsFactors = FALSE)
+floor_tbl$fy <- season_labels[floor_tbl$y]
+floor_tbl$n_alive <- NA_integer_
+floor_tbl$n_reseen <- NA_integer_
+for (i in seq_len(nrow(floor_tbl))) {
+  loc <- locs[floor_tbl$pond[i]]
+  y <- floor_tbl$y[i]
+  oct_y <- as.Date(paste0(season_labels[y] - 1, "-10-01"))
+  oct_y1 <- as.Date(paste0(season_labels[y], "-10-01"))
+  df <- KnownSurvivalIPGIEL |> filter(location == loc) |> distinct(PITIndex, first_date, MaxScanDate)
+  alive <- df |> filter(first_date <= oct_y, MaxScanDate >= oct_y)
+  floor_tbl$n_alive[i] <- nrow(alive)
+  floor_tbl$n_reseen[i] <- sum(alive$MaxScanDate >= oct_y1)
+}
+floor_tbl <- floor_tbl |> mutate(floor = if_else(n_alive > 0, n_reseen / n_alive, NA_real_))
+nEvt <- matrix(0, nrow = 3, ncol = 10, dimnames = list(c("IP2", "IP5", "IP6"), paste0("FY", season_labels)))
+nEvt["IP5", "FY2020"] <- 9
+nEvt["IP2", "FY2022"] <- 7
+dE_cols <- paste0("dE[", 1:3, "]")
+model_tbl <- expand.grid(pond = c("IP2", "IP5", "IP6"), y = 1:9, stringsAsFactors = FALSE)
+model_tbl$fy <- season_labels[model_tbl$y]
+model_tbl$mean <- NA_real_
+model_tbl$lo <- NA_real_
+model_tbl$hi <- NA_real_
+pond_idx <- c("IP2" = 1, "IP5" = 2, "IP6" = 3)
+for (i in seq_len(nrow(model_tbl))) {
+  j <- pond_idx[model_tbl$pond[i]]
+  y <- model_tbl$y[i]
+  col <- paste0("lphiA[", j, ", ", y, "]")
+  n_e <- nEvt[model_tbl$pond[i], paste0("FY", season_labels[y])]
+  if (n_e > 0) {
+    v <- plogis(comb[, col])^(12 - n_e) * plogis(comb[, col] + comb[, dE_cols[j]])^n_e
+  } else {
+    v <- plogis(comb[, col])^12
+  }
+  model_tbl$mean[i] <- mean(v)
+  model_tbl$lo[i] <- quantile(v, 0.025)
+  model_tbl$hi[i] <- quantile(v, 0.975)
+}
+comp_tbl <- floor_tbl |> left_join(model_tbl, by = c("pond", "y", "fy")) |>
+  mutate(is_event = (pond == "IP5" & fy == 2020) | (pond == "IP2" & fy == 2022), fylab = factor(paste0("FY", fy), levels = paste0("FY", season_labels)))
+ggplot(comp_tbl, aes(x = fylab)) +
+  geom_rect(data = comp_tbl |> filter(is_event), aes(xmin = as.numeric(fylab) - 0.4, xmax = as.numeric(fylab) + 0.4, ymin = -Inf, ymax = Inf), inherit.aes = FALSE, fill = "red", alpha = 0.12) +
+  geom_pointrange(aes(y = mean, ymin = lo, ymax = hi), color = "steelblue", position = position_nudge(x = 0.12)) +
+  geom_point(aes(y = floor), shape = 1, size = 2.4, position = position_nudge(x = -0.12)) +
+  facet_wrap(~pond, ncol = 1) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(x = NULL, y = "Annual adult survival (Oct-Oct)", caption = "Filled blue = model (event-adjusted); open circle = empirical floor") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Two patterns stand out. First, restricted to the 19 non-event pond-seasons with at least 15
+known-alive fish, empirical survival floors range from about 0.05 to 0.92 with no visible trend by
+year or pond — the kind of unpatterned variation a single shared covariate slope is unlikely to
+resolve, consistent with the recruit-density figure showing almost no continuous gradient to
+regress against in the first place. Second, the model-vs-floor comparison shows the die-off
+mechanism working well when the event window spans most of a season (IP5 FY2020: model
+`r sprintf("%.1f%%", 100*comp_tbl$mean[comp_tbl$pond=="IP5" & comp_tbl$fy==2020])` vs. floor
+`r sprintf("%.1f%%", 100*comp_tbl$floor[comp_tbl$pond=="IP5" & comp_tbl$fy==2020])`) but
+under-correcting when the window covers only part of a season (IP2 FY2022: model
+`r sprintf("%.1f%%", 100*comp_tbl$mean[comp_tbl$pond=="IP2" & comp_tbl$fy==2022])` vs. floor
+`r sprintf("%.1f%%", 100*comp_tbl$floor[comp_tbl$pond=="IP2" & comp_tbl$fy==2022])`) — the same
+partial-season under-correction documented for razorback sucker's analogous IP1 FY2022 crash. A
+year-level random effect, as the proposed IPM uses, would face the same partial-season smoothing
+problem and arguably has less structure than our explicit `dE` term to resist it.
+
+### 2c. Origin-based survival: architecture, not sample size, is the current limit
+
+```{r fig-origin, fig.width=6, fig.height=4}
+#| fig-cap: "Sample size of tagged bonytail by origin and pond. 'Netting-tagged' fish (origin = tagged at a subsequent netting event, the closest available proxy for recruited/wild-hatched fish) are common at all three ponds."
+origin_tbl <- e_mcmc$rd_Fish |> count(location, origin) |> mutate(Pond = case_when(location == "IPCA (Pond 2)" ~ "IP2", location == "IPCA (Pond 5)" ~ "IP5", location == "IPCA (Pond 6)" ~ "IP6"), Origin = if_else(origin == 1, "Stocked", "Netting-tagged"))
+ggplot(origin_tbl, aes(x = Pond, y = n, fill = Origin)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  labs(x = NULL, y = "Number of tagged fish", fill = NULL) +
+  scale_fill_manual(values = c("Stocked" = "grey40", "Netting-tagged" = "darkorange"))
+```
+
+Sample sizes for a stocked-vs-wild survival contrast are not the limiting factor (IP2: 857
+netting-tagged vs. 599 stocked; IP5: 159 vs. 600; IP6: 423 vs. 300). What is missing is the model
+term itself: the fitted joint robust-design model only lets `origin` affect a temporary
+post-release survival offset (`b_post`, active for a few months after tagging); established adult
+survival (`lphiA`) has no origin split at all. The proposed IPM's stocked-vs-wild split on
+established survival is conceptually reasonable and the raw sample sizes could support a first
+attempt, but it requires a model extension we have not yet built, and — given how thin and
+event-dominated the non-crash seasons already are (§2b) — any such split should be checked for
+robustness rather than assumed informative.
+
+## 3. Summary comparison
+
+```{r summary-table}
+summ_tbl <- tibble::tribble(
+  ~Aspect, ~`Your GIEL OCH model`, ~`Proposed BONY IPM (OCH component)`, ~`What Havasu shows`,
+  "Stage structure", "2 stages (<=250 mm, >250 mm); single size break, confirmed by re-sighting (Fig. 2)", "4 stages with early wild sub-stages (S1-2, S2-4, S3-4, S4-4)", "Telemetry + PIT could not identify a bare survival curve",
+  "Density effects", "No density-dependent survival/growth; recruit density near-zero in most pond-seasons (Fig. 3)", "Environmental covariates on phi^4 and F; implicitly assumes smooth gradients", "Survival near-zero in open water; mortality is a ceiling, not a gradient",
+  "Die-offs", "Explicit dE event terms with dated windows; partial-season windows under-correct (Fig. 4)", "2020/2022 IPCA die-offs treated as year random-effect shocks, operational not environmental", "Catastrophic, rapid losses; no environmental covariate successfully modeled",
+  "Covariates (general)", "None yet on survival; empirical floors swing widely with no smooth pattern (Fig. 4)", "Environmental (DO, temp, water level) on phi^4/F; release/habitat on phi^3; shared slopes across ponds", "Attempted CJS/Barker with time-varying survival/detection failed - parameters nearly 0 to 1",
+  "Origin split (stocked vs. wild)", "Not implemented on established survival; sample sizes sufficient but architecture missing (Fig. 5)", "Explicit origin-based survival split by pond for phi^4", "Open water: almost no long-term survivors; origin contrasts likely swamped by predation"
+)
+kbl <- kable(summ_tbl, format = "html", escape = FALSE)
+apply_table_style(kbl)
+```
+
+## 4. Bottom line
+
+The figures above show, rather than assert, why the proposed IPM's stage structure, covariate
+stack, and origin split are ahead of what current GIEL data can identify: a single, well-supported
+size break; recruit density that is zero in most pond-seasons with one extreme outlier; empirical
+survival that swings widely between "clean" pond-seasons with no discernible pattern; a die-off
+mechanism that works well only when its window spans most of a season; and an origin split that is
+conceptually sound but not yet built into the fitted model. None of this required a new model run —
+all of it comes from the completed GIEL-only fit and the underlying monitoring records. The
+existing 2-stage joint robust-design model, with explicit dated die-off terms, remains the better
+match to what the data currently support; the highest-value next steps are pond-specific (e.g.,
+checking IP2 for additional unflagged mortality) rather than adding covariate layers.

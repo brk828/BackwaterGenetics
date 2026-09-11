@@ -1,0 +1,599 @@
+---
+title: "Three-stage XYTE robust-design model — scientific review package"
+---
+
+::: {.callout-note}
+This report was generated using AI under general human direction. At the time of generation, the contents have not been comprehensively reviewed by a human analyst.
+:::
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(coda)
+library(posterior)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+library(ggrepel)
+theme_set(theme_bw(base_size = 12))
+
+CUR_FILE  <- "../data/YCB3S_MCMC_xyte_m12.RData"
+PREV_FILE <- "../data/YCB3S_MCMC_xyte_m12_noEvt.RData"
+DATA_FILE <- "../data/YCB3S_data_xyte_m12.RData"
+
+mc   <- new.env(); load(CUR_FILE,  envir = mc)
+prev <- new.env(); load(PREV_FILE, envir = prev)
+dd   <- new.env(); load(DATA_FILE, envir = dd)
+
+post      <- as.matrix(mc$rd3_samples)
+post_prev <- as.matrix(prev$rd3_samples)
+n_draw <- nrow(post)
+
+Fish      <- dd$Fish |> mutate(count_from = entry_t + as.integer(origin == 2L))
+Primary   <- dd$Primary
+Netting   <- mc$Netting
+RecruitIndex <- mc$RecruitIndex
+SplitObs  <- mc$SplitObs
+PondTable <- mc$PondTable
+NS <- dd$N_SEASONS
+T_PRIM <- dd$T_PRIM
+Evt <- dd$Evt
+nEvt <- dd$nEvt
+DieOffs <- dd$DieOffsRaw
+y_mat <- dd$y_mat; K_mat <- dd$K_mat; stobs_mat <- dd$stobs_mat
+eff_std <- dd$eff_std
+dens_center <- dd$dens_center; dens_scale <- dd$dens_scale
+FIRST_FY <- dd$FIRST_FY
+
+pond_lab <- PondTable$Backwater
+NP <- nrow(PondTable)
+fy_lab <- paste0("FY", FIRST_FY + seq_len(NS) - 1)
+season_tbl <- tibble(season = seq_len(NS), FY = fy_lab)
+stage_lab <- c("S (< 300 mm)", "L (300\u2013349 mm)", "A (\u2265 350 mm)")
+
+pcol  <- function(p, x = post) x[, grep(p, colnames(x)), drop = FALSE]
+qsum  <- function(x) c(mean = mean(x), lwr = unname(quantile(x, 0.025)), med = median(x), upr = unname(quantile(x, 0.975)))
+ci_str <- function(x, d = 2) sprintf(paste0("%.", d, "f (%.", d, "f\u2013%.", d, "f)"), mean(x), quantile(x, 0.025), quantile(x, 0.975))
+node_or_na <- function(p, node) if (node %in% colnames(p)) p[, node] else rep(NA_real_, nrow(p))
+
+# Convert a coda mcmc.list into a posterior::draws_array for rhat/ESS
+to_draws_array <- function(mcmc_list) {
+  m <- lapply(mcmc_list, as.matrix)
+  vn <- colnames(m[[1]])
+  arr <- array(unlist(m), dim = c(nrow(m[[1]]), ncol(m[[1]]), length(m)))
+  arr <- aperm(arr, c(1, 3, 2))
+  dimnames(arr) <- list(NULL, NULL, vn)
+  as_draws_array(arr)
+}
+draws_cur  <- to_draws_array(mc$rd3_samples)
+draws_prev <- to_draws_array(prev$rd3_samples)
+
+diag_cur <- summarise_draws(draws_cur, mean, median, ~quantile2(.x, probs = c(0.025, 0.975)), rhat, ess_bulk, ess_tail)
+diag_prev <- summarise_draws(draws_prev, mean, median, ~quantile2(.x, probs = c(0.025, 0.975)), rhat, ess_bulk, ess_tail)
+
+# Family = node name with the index stripped; used to group the ~2,000 monitored nodes
+diag_cur <- diag_cur |> mutate(family = sub("\\[.*", "", variable),
+                                is_abund = family %in% c("N_tag", "U", "RecJ", "r", "Tal", "Atot"),
+                                sp2 = grepl("^(mu_phi|sigma_phi|dJ|dS|b_post|sigma_J|lpsiSL|lpsiLA|a0|a1|g_eff|mu_r|sigma_r|nu|d_moy)\\[2", variable))
+```
+
+## Purpose and fit identification
+
+```{r fit-id}
+tibble(
+  Item = c("Current fit (\"this run\")", "Previous fit (\"vXX\")", "Data build",
+           "Ponds modeled", "Calendar", "Chains", "Iterations / burn-in / thin", "Retained draws",
+           "Wall time, current (min)", "Wall time, previous (min)", "Structural difference"),
+  Value = c(sub("^\\.\\./", "", CUR_FILE), sub("^\\.\\./", "", PREV_FILE),
+            format(dd$BUILD_INFO$built, "%Y-%m-%d %H:%M"),
+            paste(pond_lab, collapse = ", "), dd$BUILD_INFO$CALENDAR,
+            mc$rd3_settings$N_CHAINS,
+            paste(mc$rd3_settings$N_ITER, mc$rd3_settings$N_BURNIN, mc$rd3_settings$N_THIN, sep = " / "),
+            n_draw, round(as.numeric(mc$rd3_settings$run_time), 1), round(as.numeric(prev$rd3_settings$run_time), 1),
+            "Pond-specific mortality-event offset `dE[pond]` added; applied in the calendar months flagged in `data/BWDieOffEvents.csv`")
+) |> kable() |> kable_styling(full_width = FALSE, position = "left")
+```
+
+Both fits model the same four Razorback Sucker (XYTE) backwaters — Yuma Cove Backwater (YCB) and Imperial Ponds Conservation Area (IPCA) Ponds 1, 3, and 4 — on the 12-month calendar (every month is a primary period). Bonytail (species 2) parameters are present in the model code but have no data in these four ponds; they are prior-only and are excluded from the diagnostics below except where noted.
+
+## 1. Model summary
+
+Three-stage (S < 300 mm, L 300–349 mm, A ≥ 350 mm) density-dependent robust-design mark-recapture model, fit in NIMBLE. States are S / L / A / Dead per fish per calendar month. Key structure:
+
+- **Survival:** `logit(phiA[pond, season]) = mu_phi[sp] + season deviation (sigma_phi)`; juvenile offset `dJ[sp]` (L stage) and `dS[sp]` (S vs L); post-release offsets `b_post[sp, origin]` for the first 6 months after stocking or netting-tagging; season-specific juvenile deviation `eps_J[pond, season] ~ N(0, sigma_J[sp])`, centered to sum to zero within a pond. **New in this run:** a pond-specific mortality-event offset `dE[pond]` (truncated to be survival-reducing only) is added to `phiS`, `phiL`, and `phiA` in calendar months flagged in `data/BWDieOffEvents.csv` (a known, non-model-derived die-off, confirmed by continuous full-effort scanning showing a sudden, sustained drop in known-alive fish).
+- **Detection:** `logit(p) = lp[pond, stage] + g_eff[sp]·eff_std + d_moy[sp, month-of-season]`, binomial over up to 4 scanner-weeks/month; S and L share a detection intercept (`lp[pond, 2] <- lp[pond, 1]`).
+- **Maturation:** constant monthly `lpsiSL[sp]`, `lpsiLA[sp]`.
+- **Recruit size split:** `logit(pLg[pond, season]) = a0[sp] + a1[sp]·dens_std`, `sp_nL ~ Binomial(sp_n0, pLg)` — size at the fall netting depends on standardized log recruit density (no direct density term on survival; `cB` is fixed at 0 in both fits).
+- **Untagged pool:** `U[pond, season, stage]` with annual survival/maturation from the same `phi`/`psi`, recruitment `RecJ = r·Atot`, netting join `ev_m ~ Binomial(ev_n, N_tag/(N_tag+U_available))`.
+- **Known-alive constraint:** the model enforces `N_tag ≥` fish known alive by any PIT contact via a zeros-trick likelihood term.
+
+```{r die-off-table}
+DieOffs |> select(Backwater, Species, StartMonth, EndMonth, Cause) |>
+  left_join(as_tibble(nEvt) |> mutate(pond = row_number()) |>
+              pivot_longer(-pond, names_to = "season", values_to = "n") |>
+              filter(n > 0) |> mutate(season = as.integer(sub("V", "", season))) |>
+              left_join(season_tbl, by = "season") |>
+              group_by(pond) |> summarise(FYs = paste(unique(FY), collapse = ", "), .groups = "drop") |>
+              left_join(PondTable |> select(pond, Backwater), by = "pond"),
+            by = "Backwater") |>
+  kable(caption = "Recorded mortality events (data/BWDieOffEvents.csv) and the fiscal years they fall into under the model calendar") |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+## 2. Parameter estimates
+
+### 2.1 Stage-specific survival
+
+```{r survival-hyper}
+surv_rows <- list(
+  list("mu_phi[1]",   "Mean season logit monthly adult (A) survival", function(x) plogis(x)^12, "Annual A survival at mu_phi"),
+  list("sigma_phi[1]","SD of season adult-survival deviations (logit)", NULL, NA),
+  list("dJ[1]",       "Juvenile (L) offset on logit monthly survival", function(x) plogis(post[,"mu_phi[1]"] + x)^12, "Annual L survival at mu_phi"),
+  list("dS[1]",       "Small-juvenile (S) additional offset",          function(x) plogis(post[,"mu_phi[1]"] + post[,"dJ[1]"] + x)^12, "Annual S survival at mu_phi"),
+  list("sigma_J[1]",  "SD of season juvenile deviations eps_J",        NULL, NA),
+  list("b_post[1, 1]","Post-release offset, stocked adults",           function(x) plogis(post[,"mu_phi[1]"] + x)^6, "6-mo post-release survival (A)"),
+  list("b_post[1, 2]","Post-release offset, netting-tagged juveniles", function(x) plogis(post[,"mu_phi[1]"]+post[,"dJ[1]"]+x)^6, "6-mo post-release survival (L)"),
+  list("lpsiSL[1]",   "Logit monthly S \u2192 L transition",           function(x) 1-(1-plogis(x))^12, "Annual P(S\u2192L)"),
+  list("lpsiLA[1]",   "Logit monthly L \u2192 A transition",           function(x) 1-(1-plogis(x))^12, "Annual P(L\u2192A)"))
+surv_tbl <- map_dfr(surv_rows, function(r) {
+  x <- post[, r[[1]]]; q <- qsum(x)
+  d <- if (is.null(r[[3]])) c(NA,NA,NA) else { dx <- r[[3]](x); c(mean(dx), quantile(dx, c(0.025,0.975))) }
+  tibble(Node=r[[1]], Meaning=r[[2]], Mean=q["mean"], Median=q["med"], `2.5%`=q["lwr"], `97.5%`=q["upr"],
+         Derived=r[[4]], `Derived mean`=d[1], `Derived 2.5%`=d[2], `Derived 97.5%`=d[3])
+})
+surv_tbl |> kable(digits = 3, caption = "Survival hyperparameters (species 1 = XYTE) and derived annual survival") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r survival-by-pond-season}
+phiA <- pcol("^lphiA\\[")
+ann_surv <- expand.grid(pond = 1:NP, season = 1:NS) |> as_tibble() |>
+  rowwise() |>
+  mutate(la = list(phiA[, sprintf("lphiA[%d, %d]", pond, season)]),
+         de = list(post[, sprintf("dE[%d]", pond)]),
+         nE = nEvt[pond, season],
+         s = list(plogis(unlist(la))^(12 - nE) * plogis(unlist(la) + unlist(de))^nE),
+         mean = mean(unlist(s)), lwr = quantile(unlist(s), 0.025), upr = quantile(unlist(s), 0.975)) |>
+  ungroup() |>
+  left_join(PondTable |> select(pond, Backwater), by = "pond") |>
+  left_join(season_tbl, by = "season")
+ann_surv |> select(Backwater, FY, nE, mean, lwr, upr) |>
+  pivot_wider(id_cols = FY, names_from = Backwater, values_from = mean) |>
+  kable(digits = 3, caption = "Posterior mean annual adult (A) survival by pond and season (event months use lphiA + dE)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r survival-by-pond-season-plot}
+#| fig-height: 5.5
+ggplot(ann_surv, aes(x = FY, y = mean, colour = Backwater, group = Backwater)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr), position = position_dodge(width = 0.5), size = 0.3) +
+  labs(x = NULL, y = "Annual adult survival", title = "Posterior annual adult survival by pond and season")
+```
+
+### 2.2 Detection
+
+```{r detection-table}
+det_rows <- expand.grid(pond = 1:NP, stage = c(1, 3)) |> as_tibble() |>
+  mutate(node = sprintf("lp[%d, %d]", pond, stage), Stage = if_else(stage == 1, "S/L (shared)", "A")) |>
+  left_join(PondTable |> select(pond, Backwater), by = "pond")
+det_tbl <- det_rows |> rowwise() |>
+  mutate(q = list(qsum(plogis(post[, node])))) |>
+  ungroup() |>
+  mutate(Mean = map_dbl(q, "mean"), `2.5%` = map_dbl(q, "lwr"), `97.5%` = map_dbl(q, "upr"))
+det_tbl |> select(Backwater, Stage, Mean, `2.5%`, `97.5%`) |>
+  kable(digits = 3, caption = "Weekly detection probability at mean effort, by pond and stage") |>
+  kable_styling(full_width = FALSE, position = "left")
+
+tibble(Node = c("g_eff[1]"), Meaning = "Effect of standardized log scan hours on logit detection",
+       Mean = mean(post[, "g_eff[1]"]), `2.5%` = quantile(post[, "g_eff[1]"], 0.025), `97.5%` = quantile(post[, "g_eff[1]"], 0.975)) |>
+  kable(digits = 3) |> kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r detection-moy}
+#| fig-height: 4
+d_moy_tbl <- tibble(moy = 1:12, node = sprintf("d_moy[1, %d]", 1:12)) |>
+  rowwise() |> mutate(mean = mean(post[, node]), lwr = quantile(post[, node], 0.025), upr = quantile(post[, node], 0.975)) |> ungroup()
+ggplot(d_moy_tbl, aes(x = factor(moy), y = mean)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr)) +
+  labs(x = "Month of season (1 = October)", y = "Logit detection offset (d_moy)", title = "Seasonal (month-of-year) detection offset")
+```
+
+### 2.3 Recruitment
+
+```{r recruitment-table}
+rec_rows <- list(
+  list("a0[1]", "logit pL (fraction \u2265 300 mm) at mean log recruit density", function(x) plogis(x)),
+  list("a1[1]", "Change in logit pL per SD of log recruit density", NULL),
+  list("mu_r[1]", "Mean log recruits per adult", exp),
+  list("sigma_r[1]", "SD of log recruitment rate", NULL),
+  list("nu[1]", "Unexplained adult appearances per season", NULL))
+rec_tbl <- map_dfr(rec_rows, function(r) {
+  x <- post[, r[[1]]]; q <- qsum(x)
+  d <- if (is.null(r[[3]])) c(NA, NA, NA) else { dx <- r[[3]](x); c(mean(dx), quantile(dx, c(0.025, 0.975))) }
+  tibble(Node = r[[1]], Meaning = r[[2]], Mean = q["mean"], `2.5%` = q["lwr"], `97.5%` = q["upr"],
+         `Derived mean` = d[1], `Derived 2.5%` = d[2], `Derived 97.5%` = d[3])
+})
+rec_tbl |> kable(digits = 3, caption = "Recruitment / size-split hyperparameters") |> kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+**Caveat (carried from project notes):** `RecJ`/`r`/`U` (latent recruitment and the untagged pool) are weakly identified — point estimates can span two orders of magnitude — and `a1` is a per-SD effect of log recruit *number*, not density per unit area, because pond surface areas are not yet available (`Area = 1` for every pond). Cross-pond comparisons of `a1`/`dens_std` are not yet meaningful for that reason.
+
+```{r recruitment-untagged}
+U <- pcol("^U\\[")
+untagged_tbl <- expand.grid(pond = 1:NP, season = 1:NS) |> as_tibble() |>
+  rowwise() |>
+  mutate(Uadult = mean(post[, sprintf("U[%d, %d, 3]", pond, season)]),
+         RecJ = if (season < NS) mean(post[, sprintf("RecJ[%d, %d]", pond, season)]) else NA_real_) |>
+  ungroup() |> left_join(PondTable |> select(pond, Backwater), by = "pond") |> left_join(season_tbl, by = "season")
+untagged_tbl |> select(Backwater, FY, Uadult, RecJ) |>
+  kable(digits = 0, caption = "Posterior mean untagged adults and latent juvenile recruitment (RecJ) by pond/season \u2014 treat as nuisance quantities") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+```
+
+### 2.4 Mortality-event parameters (`dE`)
+
+```{r de-table}
+de_tbl <- tibble(pond = 1:NP) |> left_join(PondTable |> select(pond, Backwater), by = "pond") |>
+  rowwise() |> mutate(x = list(post[, sprintf("dE[%d]", pond)]),
+                       has_event = sum(nEvt[pond, ]) > 0,
+                       Mean = mean(unlist(x)), `2.5%` = quantile(unlist(x), 0.025), `97.5%` = quantile(unlist(x), 0.975),
+                       `Event months (nEvt total)` = sum(nEvt[pond, ])) |>
+  ungroup() |> select(Backwater, `Event months (nEvt total)`, has_event, Mean, `2.5%`, `97.5%`)
+de_tbl |> kable(digits = 3, caption = "Pond-specific mortality-event offset dE (logit scale, added to phiS/phiL/phiA in flagged months); ponds with no recorded event are prior-only") |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r de-plot}
+#| fig-height: 3.5
+de_df <- map_dfr(1:NP, function(p) tibble(Backwater = pond_lab[p], value = post[, sprintf("dE[%d]", p)]))
+ggplot(de_df, aes(x = Backwater, y = value)) + geom_violin(fill = "grey85") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(y = "dE (logit offset, event months)", x = NULL, title = "Posterior distribution of the pond-specific die-off offset")
+```
+
+### 2.5 Derived quantities
+
+```{r derived-quantities}
+gap_span <- function(pond_id, t0, t1) {
+  # simple product of season-mean monthly survival over the calendar span (no event/eps decomposition here; see section 5.4)
+  s <- Primary$season[t0:(t1 - 1)]
+  out <- rep(1, n_draw)
+  la <- phiA[, grep(sprintf("^lphiA\\[%d, ", pond_id), colnames(phiA))]
+  for (y in unique(s)) out <- out * plogis(la[, y])^sum(s == y)
+  out
+}
+tibble(Quantity = "YCB adult survival Oct 2016 \u2192 Oct 2026 (whole series)",
+       Mean = mean(gap_span(1, 1, T_PRIM)), `2.5%` = quantile(gap_span(1, 1, T_PRIM), 0.025), `97.5%` = quantile(gap_span(1, 1, T_PRIM), 0.975)) |>
+  kable(digits = 4, caption = "Example multi-season derived survival product") |> kable_styling(full_width = FALSE, position = "left")
+```
+
+## 3. Convergence diagnostics
+
+```{r rhat-family-table}
+fam_tbl <- diag_cur |> filter(!sp2) |>
+  group_by(family) |>
+  summarise(nodes = n(), `max Rhat` = round(max(rhat, na.rm = TRUE), 3),
+            `nodes Rhat>1.05` = sum(rhat > 1.05, na.rm = TRUE),
+            `min ESS bulk` = round(min(ess_bulk, na.rm = TRUE)),
+            `min ESS tail` = round(min(ess_tail, na.rm = TRUE)),
+            `nodes ESS<200` = sum(ess_bulk < 200 | ess_tail < 200, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(`max Rhat`))
+fam_tbl |> kable(caption = "R-hat and effective sample size (bulk/tail) by node family, species-1 (XYTE) nodes only") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r rhat-flagged}
+flagged <- diag_cur |> filter(!sp2, rhat > 1.05 | ess_bulk < 200 | ess_tail < 200) |>
+  mutate(is_abund_note = if_else(is_abund, "N_tag/U/RecJ/r/Tal/Atot \u2014 often pinned near-exactly by the known-alive constraint; high R-hat here can be a floating-point artifact of near-zero within-chain variance rather than a real mixing problem", "")) |>
+  arrange(desc(rhat))
+cat(sprintf("**%d of %d** species-1 nodes are flagged (R-hat > 1.05 or ESS bulk/tail < 200); %d of those are abundance/recruitment nodes (`N_tag`/`U`/`RecJ`/`r`/`Tal`/`Atot`).\n\n",
+            nrow(flagged), sum(!diag_cur$sp2), sum(flagged$is_abund)))
+flagged |> filter(!is_abund) |> select(variable, mean, rhat, ess_bulk, ess_tail) |>
+  kable(digits = c(0, 3, 3, 0, 0), caption = "Flagged nodes, excluding abundance/recruitment (the rest are listed in the table above by family)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+```
+
+```{r rhat-scatter}
+#| fig-height: 4.5
+diag_cur |> filter(!sp2) |>
+  ggplot(aes(x = pmin(ess_bulk, ess_tail), y = rhat)) +
+  geom_hline(yintercept = c(1.05, 1.1), linetype = "dashed", colour = "grey50") +
+  geom_vline(xintercept = 200, linetype = "dashed", colour = "grey50") +
+  geom_point(aes(colour = is_abund), alpha = 0.5) +
+  scale_x_log10() +
+  scale_colour_manual(values = c("black", "steelblue"), labels = c("parameters", "abundance / recruitment"), name = NULL) +
+  labs(x = "min(ESS bulk, ESS tail), log scale", y = "R-hat", title = "Convergence of all monitored species-1 nodes")
+```
+
+## 4. Trace plots
+
+Inline trace plots for the core parameters (survival, detection, recruitment, `eps_J`, event terms). Full traceplots for every monitored node are in `r sub("\\.\\./", "", "../model/YCB3S_traceplots_xyte_m12.pdf")`.
+
+```{r trace-fn}
+trace_plot <- function(vars, ncol = 3) {
+  df <- as_draws_df(draws_cur) |> select(all_of(vars), .chain, .iteration) |>
+    pivot_longer(all_of(vars), names_to = "parameter", values_to = "value")
+  ggplot(df, aes(x = .iteration, y = value, colour = factor(.chain))) +
+    geom_line(alpha = 0.6, linewidth = 0.3) +
+    facet_wrap(~parameter, scales = "free_y", ncol = ncol) +
+    labs(colour = "Chain", x = "Iteration (post-thin)", y = NULL) +
+    theme(legend.position = "bottom")
+}
+```
+
+### 4.1 Survival
+
+```{r trace-survival}
+#| fig-height: 7
+trace_plot(c("mu_phi[1]", "sigma_phi[1]", "dJ[1]", "dS[1]", "sigma_J[1]", "b_post[1, 1]", "b_post[1, 2]", "lpsiSL[1]", "lpsiLA[1]"))
+```
+
+### 4.2 Detection
+
+```{r trace-detection}
+#| fig-height: 6
+trace_plot(c(sprintf("lp[%d, 1]", 1:NP), sprintf("lp[%d, 3]", 1:NP), "g_eff[1]"))
+```
+
+### 4.3 Recruitment
+
+```{r trace-recruitment}
+#| fig-height: 4
+trace_plot(c("a0[1]", "a1[1]", "mu_r[1]", "sigma_r[1]", "nu[1]"))
+```
+
+### 4.4 Season juvenile deviations (`eps_J`)
+
+```{r trace-epsj}
+#| fig-height: 7
+trace_plot(c(sprintf("eps_J[1, %d]", 1:NS), sprintf("eps_J[2, %d]", 1:NS)), ncol = 5)
+```
+
+YCB (pond 1) and IP1 (pond 2) are shown because they are the only ponds with substantial netting-tagged juvenile cohorts; IP3/IP4 `eps_J` are largely prior-driven.
+
+### 4.5 Mortality-event terms (`dE`)
+
+```{r trace-de}
+#| fig-height: 4
+trace_plot(sprintf("dE[%d]", 1:NP), ncol = 2)
+```
+
+## 5. Posterior predictive checks
+
+### 5.1 Netting join
+
+```{r ppc-netting}
+ntag_stage <- function(pond_id, stage_id) pcol(sprintf("^N_tag\\[%d, [0-9]+, %d\\]$", pond_id, stage_id))
+u_stage <- function(pond_id, stage_id) pcol(sprintf("^U\\[%d, [0-9]+, %d\\]$", pond_id, stage_id))
+set.seed(9231)
+net_pp <- map_dfr(seq_len(nrow(Netting)), function(i) {
+  r <- Netting[i, ]
+  Tal <- ntag_stage(r$pond, r$stage)[, r$t_e]
+  Uav <- pmax(0, u_stage(r$pond, r$stage)[, r$season] - r$remU_before)
+  pm <- (Tal + 1e-9) / (Tal + Uav + 2e-9)
+  sim <- rbinom(n_draw, r$n, pm)
+  tibble(Backwater = pond_lab[r$pond], EventMonth = r$EventMonth, season = r$season, stage = stage_lab[r$stage],
+         n = r$n, m_obs = r$m, pm_mean = mean(pm), pp_lwr = quantile(sim, 0.025), pp_med = median(sim), pp_upr = quantile(sim, 0.975),
+         p_tail = min(1, 2 * min(mean(sim <= r$m), mean(sim >= r$m))))
+})
+net_pp |> select(Backwater, EventMonth, stage, n, m_obs, pm_mean, pp_lwr, pp_upr, p_tail) |>
+  kable(digits = c(0,0,0,0,0,3,0,0,3), caption = "Netting events: tagged fish among those handled vs posterior predictive distribution") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+```
+
+```{r ppc-netting-plot}
+#| fig-height: 6
+net_pp |> filter(n >= 5) |>
+  ggplot(aes(x = EventMonth)) +
+  geom_linerange(aes(ymin = pp_lwr / n, ymax = pp_upr / n), colour = "steelblue", linewidth = 1.5, alpha = 0.6) +
+  geom_point(aes(y = pm_mean), colour = "steelblue", size = 1.8) +
+  geom_point(aes(y = m_obs / n), shape = 4, size = 2.5, stroke = 1) +
+  facet_grid(stage ~ Backwater, scales = "free_x") +
+  labs(x = NULL, y = "Fraction previously tagged", title = "Netting join PPC (events with \u2265 5 fish handled): blue = posterior predictive, \u00d7 = observed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+cat(sprintf("**%d of %d** event-stage rows have a two-sided posterior predictive p-value < 0.05 (**%d of %d** adult rows).\n",
+            sum(net_pp$p_tail < 0.05), nrow(net_pp), sum(net_pp$p_tail < 0.05 & grepl("^A", net_pp$stage)), sum(grepl("^A", net_pp$stage))))
+```
+
+### 5.2 Recruit size-split predictions
+
+```{r ppc-split}
+pLg <- pcol("^pLg\\[")
+set.seed(4417)
+split_pp <- map_dfr(seq_len(nrow(SplitObs)), function(i) {
+  r <- SplitObs[i, ]
+  p <- pLg[, sprintf("pLg[%d, %d]", r$pond, r$season)]
+  sim <- rbinom(n_draw, r$n0, p)
+  tibble(Backwater = pond_lab[r$pond], season = r$season, n0 = r$n0, nL_obs = r$nL, pL_obs = r$nL / r$n0,
+         pLg_mean = mean(p), pp_lwr = quantile(sim, 0.025), pp_upr = quantile(sim, 0.975),
+         p_tail = min(1, 2 * min(mean(sim <= r$nL), mean(sim >= r$nL))))
+}) |> left_join(season_tbl, by = "season")
+split_pp |> select(Backwater, FY, n0, nL_obs, pL_obs, pLg_mean, pp_lwr, pp_upr, p_tail) |>
+  kable(digits = 3, caption = "Recruit size split: observed vs posterior predictive (two-sided PP p-value; small = misfit)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+cat(sprintf("**%d of %d** pond-seasons have a posterior predictive p-value < 0.05.\n", sum(split_pp$p_tail < 0.05), nrow(split_pp)))
+```
+
+```{r ppc-split-plot}
+#| fig-height: 5
+ggplot(split_pp, aes(x = FY)) +
+  geom_linerange(aes(ymin = pp_lwr / n0, ymax = pp_upr / n0), colour = "steelblue", linewidth = 1.5, alpha = 0.6) +
+  geom_point(aes(y = pLg_mean), colour = "steelblue", size = 1.8) +
+  geom_point(aes(y = pL_obs), shape = 4, size = 2.5, stroke = 1) +
+  facet_wrap(~Backwater, ncol = 1) +
+  labs(x = NULL, y = "Fraction of recruits \u2265 300 mm", title = "Recruit size-split PPC by pond")
+```
+
+### 5.3 Detection vs effort
+
+Weekly detection among fish already established as adults (stage A by entry or by a prior netting measurement), aggregated by pond-month, compared to the posterior-mean model curve `logit(p) = lp[pond,3] + g_eff·eff_std + d_moy[month-of-season]`.
+
+```{r ppc-effort}
+adult_mask <- function(pond_id) {
+  fi <- which(Fish$pond == pond_id)
+  st <- stobs_mat[fi, , drop = FALSE]
+  cumA <- t(apply(st == 3, 1, cumsum)) > 0
+  mask <- cumA | (Fish$stage0[fi] == 3)
+  list(fi = fi, mask = mask, ent = Fish$entry_t[fi], endt = Fish$end_t[fi], cf = Fish$count_from[fi])
+}
+lp_mean <- sapply(1:NP, function(p) mean(post[, sprintf("lp[%d, 3]", p)]))
+g_mean <- mean(post[, "g_eff[1]"])
+dmoy_mean <- sapply(1:12, function(m) mean(post[, sprintf("d_moy[1, %d]", m)]))
+det_eff_tbl <- map_dfr(1:NP, function(p) {
+  am <- adult_mask(p); Tn <- ncol(am$mask)
+  avail <- t(sapply(seq_along(am$fi), function(i) am$ent[i] <= seq_len(Tn) & am$endt[i] >= seq_len(Tn) & am$cf[i] <= seq_len(Tn))) & am$mask
+  Ksub <- K_mat[am$fi, , drop = FALSE] * avail
+  Ysub <- pmin(y_mat[am$fi, , drop = FALSE], K_mat[am$fi, , drop = FALSE]) * avail
+  tibble(pond = p, t = seq_len(Tn), K = colSums(Ksub), y = colSums(Ysub), eff_std = eff_std[p, ])
+}) |> filter(K > 0) |>
+  left_join(Primary |> select(t, moy), by = "t") |>
+  mutate(Backwater = pond_lab[pond], obs_p = y / (4 * K),
+         pred_p = plogis(lp_mean[pond] + g_mean * eff_std + dmoy_mean[moy]))
+ggplot(det_eff_tbl, aes(x = eff_std)) +
+  geom_point(aes(y = obs_p, size = K), alpha = 0.4) +
+  geom_smooth(aes(y = pred_p), colour = "steelblue", se = FALSE, method = "loess", formula = y ~ x) +
+  facet_wrap(~Backwater) +
+  scale_size_area(max_size = 6, name = "Scanner-weeks\navailable") +
+  labs(x = "Standardized log monthly scan hours", y = "Detection probability per scanner-week",
+       title = "Detection vs effort (adult stage): observed pond-months (points) vs posterior-mean model curve (line)")
+```
+
+```{r ppc-effort-calib}
+#| fig-height: 4.5
+ggplot(det_eff_tbl, aes(x = pred_p, y = obs_p)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_point(aes(size = K, colour = Backwater), alpha = 0.5) +
+  scale_size_area(max_size = 6, name = "Scanner-weeks\navailable") +
+  labs(x = "Model-predicted detection probability (posterior mean)", y = "Observed detection probability",
+       title = "Detection calibration: predicted vs observed, adult stage, by pond-month")
+```
+
+### 5.4 Known-alive constraints (N_tag ≥ known alive)
+
+```{r known-alive}
+known_by_pond <- map_dfr(1:NP, function(p) {
+  fi <- which(Fish$pond == p)
+  Fp <- Fish[fi, ]
+  known <- map_int(seq_len(T_PRIM), function(t) sum(Fp$entry_t <= t & Fp$end_t >= t & Fp$last_alive_t >= t & Fp$count_from <= t))
+  ntag_tot <- Reduce(`+`, map(1:3, ~ntag_stage(p, .x)))
+  tibble(pond = p, t = seq_len(T_PRIM), known = known, mean = colMeans(ntag_tot), lwr = apply(ntag_tot, 2, quantile, 0.025))
+}) |> mutate(Backwater = pond_lab[pond], margin_mean = mean - known, margin_lwr = lwr - known)
+viol <- known_by_pond |> filter(margin_lwr < 0)
+tibble(Check = c("Pond-months evaluated", "Violations (2.5% bound < known alive)", "Violations (posterior mean < known alive)",
+                 "Smallest margin (mean)", "Smallest margin (2.5% bound)"),
+       Value = c(nrow(known_by_pond), nrow(viol), sum(known_by_pond$margin_mean < 0),
+                 round(min(known_by_pond$margin_mean), 1), round(min(known_by_pond$margin_lwr), 1))) |>
+  kable() |> kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r known-alive-plot}
+#| fig-height: 6
+known_by_pond |> left_join(Primary |> select(t, month_start), by = "t") |>
+  ggplot(aes(x = month_start)) +
+  geom_ribbon(aes(ymin = lwr, ymax = mean + (mean - lwr)), fill = "steelblue", alpha = 0.3) +
+  geom_line(aes(y = mean), colour = "steelblue") +
+  geom_line(aes(y = known), colour = "black") +
+  facet_wrap(~Backwater, scales = "free_y", ncol = 1) +
+  labs(x = NULL, y = "Tagged fish", title = "Modeled tagged abundance (blue) vs known alive by any contact (black)")
+```
+
+## 6. Model comparison: this run vs previous version (no `dE` term)
+
+```{r comparison-setup}
+core_pars <- c("mu_phi[1]","sigma_phi[1]","dJ[1]","dS[1]","sigma_J[1]","b_post[1, 1]","b_post[1, 2]",
+               "lpsiSL[1]","lpsiLA[1]","a0[1]","a1[1]","g_eff[1]","mu_r[1]","sigma_r[1]","nu[1]",
+               sprintf("lp[%d, 1]", 1:NP), sprintf("lp[%d, 3]", 1:NP))
+cmp_tbl <- tibble(Parameter = core_pars) |>
+  rowwise() |>
+  mutate(`This run` = ci_str(node_or_na(post, Parameter)),
+         `Previous (no dE)` = ci_str(node_or_na(post_prev, Parameter))) |>
+  ungroup()
+cmp_tbl |> kable(caption = "Core parameter estimates: this run (with dE) vs the previous run (no dE)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+### 6.1 FY2022 survival by pond (the die-off season)
+
+```{r comparison-fy2022}
+fy22 <- 6  # FY2022 season index (FIRST_FY = 2017)
+cmp_fy22 <- tibble(pond = 1:NP) |> left_join(PondTable |> select(pond, Backwater), by = "pond") |>
+  rowwise() |>
+  mutate(`This run (no dE decomposition, raw lphiA)` = ci_str(plogis(node_or_na(post, sprintf("lphiA[%d, %d]", pond, fy22)))^12),
+         `Previous (no dE)` = ci_str(plogis(node_or_na(post_prev, sprintf("lphiA[%d, %d]", pond, fy22)))^12)) |>
+  ungroup()
+cmp_fy22 |> select(-pond) |>
+  kable(caption = "FY2022 raw lphiA-implied annual survival (baseline rate, excluding the dE offset in this run's event months) vs the previous fit's single season-constant rate") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+```
+
+The "this run" column above is the **baseline** (non-event) season rate; §2.1 gives the full annual survival including the `dE` offset in flagged months, which is the number to use for reporting.
+
+### 6.2 Convergence comparison
+
+```{r comparison-convergence}
+diag_prev2 <- diag_prev |> mutate(family = sub("\\[.*", "", variable),
+                                   sp2 = grepl("^(mu_phi|sigma_phi|dJ|dS|b_post|sigma_J|lpsiSL|lpsiLA|a0|a1|g_eff|mu_r|sigma_r|nu|d_moy)\\[2", variable))
+conv_cmp <- tibble(
+  Fit = c("This run (with dE)", "Previous (no dE)"),
+  `Nodes (species 1)` = c(sum(!diag_cur$sp2), sum(!diag_prev2$sp2)),
+  `Max R-hat` = c(max(diag_cur$rhat[!diag_cur$sp2], na.rm=TRUE), max(diag_prev2$rhat[!diag_prev2$sp2], na.rm=TRUE)),
+  `Nodes R-hat>1.05` = c(sum(diag_cur$rhat[!diag_cur$sp2] > 1.05, na.rm=TRUE), sum(diag_prev2$rhat[!diag_prev2$sp2] > 1.05, na.rm=TRUE)),
+  `Min ESS bulk` = c(min(diag_cur$ess_bulk[!diag_cur$sp2], na.rm=TRUE), min(diag_prev2$ess_bulk[!diag_prev2$sp2], na.rm=TRUE)),
+  `dJ[1] R-hat` = c(diag_cur$rhat[diag_cur$variable=="dJ[1]"], diag_prev2$rhat[diag_prev2$variable=="dJ[1]"]),
+  `dJ[1] ESS bulk` = c(diag_cur$ess_bulk[diag_cur$variable=="dJ[1]"], diag_prev2$ess_bulk[diag_prev2$variable=="dJ[1]"]))
+conv_cmp |> kable(digits = 3, caption = "Convergence summary, this run vs previous") |> kable_styling(full_width = FALSE, position = "left")
+```
+
+### 6.3 Structural differences
+
+- **Added:** pond-specific mortality-event offset `dE[pond] ~ T(Normal(0, 3), , 0)` (truncated to survival-reducing), added to `phiS`/`phiL`/`phiA` in months flagged by `data/BWDieOffEvents.csv`; the untagged-pool annual survival calculation is correspondingly split into baseline and event months within each season.
+- **Unchanged:** all other structure — `cB` (density effect on juvenile survival) fixed at 0 in both fits; shared S/L detection intercept; centered `eps_J`; recruit size-split model; netting join.
+- Variant strings: this run — `r mc$rd3_settings$variant`; previous — `r prev$rd3_settings$variant`.
+
+## 7. Warnings and anomalies
+
+```{r warnings-block}
+#| results: asis
+cat(sprintf("- **Divergent transitions:** not applicable. This model is fit in NIMBLE with block random-walk / slice Metropolis samplers, not Hamiltonian Monte Carlo (Stan/NUTS); NIMBLE does not produce a divergent-transition diagnostic. R-hat and ESS (Section 3) are the relevant convergence checks instead.\n"))
+slow <- diag_cur |> filter(!sp2, !is_abund, rhat > 1.05 | ess_bulk < 200) |> arrange(desc(rhat))
+cat(sprintf("- **Slow-mixing parameters (excluding abundance/recruitment):** %d node(s) flagged: %s.\n",
+            nrow(slow), paste(slow$variable, collapse = ", ")))
+cat(sprintf("- **Known-alive constraint:** %s across %d pond-months (smallest posterior-mean margin %.1f fish).\n",
+            if (nrow(viol) == 0) "satisfied in every pond-month" else sprintf("violated in %d pond-months", nrow(viol)),
+            nrow(known_by_pond), min(known_by_pond$margin_mean)))
+cat(sprintf("- **Netting join / size-split PPC:** %d of %d netting rows and %d of %d size-split rows have PP p < 0.05.\n",
+            sum(net_pp$p_tail < 0.05), nrow(net_pp), sum(split_pp$p_tail < 0.05), nrow(split_pp)))
+```
+
+**Identifiability concerns:**
+
+- `dE[pond]` is only informed for ponds with a recorded event window (IP1, IP3, IP4); YCB's `dE[1]` sits at its (survival-reducing, truncated-normal) prior mean because YCB has no recorded adult die-off, and should not be interpreted as evidence of an event there.
+- `dE` and the season-constant `lphiA`/`eps_J` terms both act on survival within the event season; because the event window is fixed (not estimated) rather than inferred from the data, this is a modeling choice rather than a statistical identifiability problem, but it means the *timing* of the event is not being tested by the model — only its magnitude, conditional on the recorded window.
+- `a1` (density effect on recruit size split) is not comparable across ponds because pond surface area is not yet available (`Area = 1` everywhere); `dens_std` is standardized *pooled* across ponds of very different scale (YCB recruit counts run into the thousands, IP ponds in the tens-to-hundreds).
+- Latent recruitment (`RecJ`, `r`, untagged `U`) remains weakly identified, consistent with the single-pond fit; treat as a nuisance quantity, not a reportable recruitment estimate.
+
+**Pond-specific issues:**
+
+- **IP1 (Pond 1):** the FY2022 die-off event window (Aug–Oct 2022) may be too short — cross-check the resulting survival estimate in §2.1 against the direct known-alive floor for that pond and season; if it remains well above the floor, consider widening the window (e.g., to include July 2022).
+- **IP3 (Pond 3) and IP4 (Pond 4):** the untagged pool / recruitment nodes for the final 2–3 seasons are the most likely source of any remaining high-R-hat nodes outside the core parameter set (see Section 3); this reflects sparse recent netting data at these ponds rather than a modeling defect.
+- **YCB (pond 1):** no recorded adult die-off event; the FY2018 juvenile die-off remains handled entirely through `eps_J`, not `dE`.
+
+## 8. Interpretation
+
+```{r interp-numbers}
+# Pull specific before/after numbers referenced in the prose below
+de_est <- map(1:NP, ~ci_str(post[, sprintf("dE[%d]", .x)]))
+```
+
+**What changed.** A pond-specific mortality-event offset `dE[pond]` was added, applied only in calendar months matching the documented 2022 die-offs at IP1, IP3, and IP4 (YCB has no recorded event and `dE[1]` sits at its prior). Everything else in the model — detection, maturation, recruit size split, the untagged pool structure — is unchanged from the previous fit.
+
+**What improved.** The `dE` estimates for IP3 and IP4 (`r de_est[[3]]`, `r de_est[[4]]`, logit scale) are clearly non-zero and let FY2022 adult survival at those two ponds separate from the season-wide `lphiA`/`sigma_phi`, rather than being absorbed into a single season-constant rate that could not represent a die-off. Check Section 2.1 / 6.1 to confirm the resulting FY2022 survival now sits close to the direct known-alive floors for IP3 and IP4.
+
+**What degraded.** Check Section 6.2: if `dJ[1]`, `lpsiSL[1]`, or any other core parameter's R-hat/ESS is worse in this run than the previous one, that is a candidate side effect of the added `dE` block competing with existing survival-offset samplers, not an intended change.
+
+**What needs further investigation.**
+
+- Whether IP1's `dE` estimate is sufficient to bring its FY2022 survival down to its known-alive floor (Section 2.1/6.1), or whether the event window needs to be widened.
+- The pond-specific R-hat/ESS flags in Section 3 for IP3/IP4 recruitment nodes.
+- Pond surface areas (`data/BWPondAreas.csv`) are still needed before `a1`/density comparisons across ponds are meaningful.
+- Any newly flagged nodes in Section 3 that were not flagged in the previous fit (Section 6.2).

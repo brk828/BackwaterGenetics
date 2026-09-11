@@ -1,0 +1,711 @@
+---
+title: "Yuma Cove Backwater Razorback Sucker — three-stage robust-design model validation"
+subtitle: "Phase 3: convergence, known-alive constraints, survival floors, and posterior predictive checks"
+author: "Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+params:
+  calendar: "m12"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(coda)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+theme_set(theme_bw(base_size = 12))
+# Calendar of the fit being validated: "m7" (Oct-Apr primaries) or "m12" (all
+# months). Render the other one with: quarto render YCB3S_validation.qmd -P calendar:m7 --output YCB3S_validation_m7.html
+CAL <- params$calendar
+stopifnot(CAL %in% c("m7", "m12"))
+sfx <- if (CAL == "m12") "_m12" else ""
+alt_sfx <- if (CAL == "m12") "" else "_m12"
+mcmc_file <- paste0("../data/YCB3S_MCMC", sfx, ".RData")
+data_file <- paste0("../data/YCB3S_data", sfx, ".RData")
+mc <- new.env(); load(mcmc_file, envir = mc)
+dd <- new.env(); load(data_file, envir = dd)
+stopifnot(identical(dd$BUILD_INFO$CALENDAR %||% "m7", CAL))
+# The other calendar's fit, for side-by-side checks (skipped if absent)
+alt_file <- paste0("../data/YCB3S_MCMC", alt_sfx, ".RData")
+have_alt <- file.exists(alt_file)
+if (have_alt) { alt <- new.env(); load(alt_file, envir = alt); alt_post <- as.matrix(alt$rd3_samples) }
+alt_lab <- if (CAL == "m12") "m7 (Oct–Apr) fit" else "m12 (all months) fit"
+this_lab <- if (CAL == "m12") "m12 (all months) fit" else "m7 (Oct–Apr) fit"
+post <- as.matrix(mc$rd3_samples)
+n_draw <- nrow(post)
+Primary <- dd$Primary
+NS <- dd$N_SEASONS
+T_PRIM <- dd$T_PRIM
+tApr <- dd$RD_constants$tApr
+# First primary of each season from the calendar (moy 1 = October); works for the
+# m7 and m12 builds, unlike tApr + 1 which is May under m12
+tOct <- Primary$t[Primary$moy == 1]
+# Calendar months between two primaries. Under m7 consecutive primaries are not
+# always one month apart (Apr -> Oct is 6), so index differences must not be
+# used as month counts.
+mdiff <- function(t0, t1) as.integer(round(as.numeric(Primary$month_start[t1] - Primary$month_start[t0]) / 30.44))
+# Pre-built prose fragments (inline R cannot contain backticks)
+cal_desc <- if (CAL == "m12") "every month October–September is a primary period (12 per season, 120 in total), so May–September scanning provides detections as well as known-alive constraints" else "only October–April months are primary periods (7 per season, 70 in total); May–September contacts enter only as known-alive constraints collapsed to April"
+alt_note <- if (have_alt) paste0("Where useful, the ", alt_lab, " (`", sub("^\\.\\./", "", alt_file), "`) is shown alongside for comparison.") else ""
+mcmc_label <- paste0("`", sub("^\\.\\./", "", mcmc_file), "`")
+trace_label <- paste0("`model/YCB3S_traceplots", sfx, ".pdf`")
+t_of <- function(ym) Primary$t[format(Primary$month_start, "%Y-%m") == ym]
+fy_lab <- paste0("FY", dd$FIRST_FY + seq_len(NS) - 1)
+season_tbl <- tibble(season = seq_len(NS), FY = fy_lab, tOct = tOct, tApr = tApr)
+# count_from lives only in RD_constants: netting-tagged fish are not counted as tagged-alive in their tagging month
+Fish <- dd$Fish |> filter(pond == 1) |> mutate(count_from = entry_t + as.integer(origin == 2L))
+Netting <- mc$Netting |> filter(pond == 1)
+RecruitIndex <- mc$RecruitIndex |> filter(pond == 1)
+SplitObs <- mc$SplitObs |> filter(pond == 1)
+stage_lab <- c("S (< 300 mm)", "L (300–349 mm)", "A (≥ 350 mm)")
+pcol <- function(pattern) post[, grep(pattern, colnames(post), fixed = FALSE), drop = FALSE]
+qsum <- function(x) c(mean = mean(x), lwr = unname(quantile(x, 0.025)), med = median(x), upr = unname(quantile(x, 0.975)))
+rhat <- mc$rhat3_all
+n_eff <- effectiveSize(mc$rd3_samples)
+```
+
+## Purpose and fit being validated
+
+This document validates the current working variant of the three-stage (S / L / A) density-dependent robust-design model for Razorback Sucker in Yuma Cove Backwater (YCB), fitted by `model/YCB3S_NIMBLE.R` and saved as `r mcmc_label`. The fit uses the **`r CAL`** calendar: `r cal_desc`. `r alt_note` It follows the Phase 3 checklist in the plan file:
+
+1. Convergence (R-hat, effective sample size) for hyperparameters and for the abundance and recruitment nodes.
+2. Constraint check: modeled tagged abundance must be at least the number of fish known alive by any PIT contact in every month.
+3. Posterior annual survival by stage against empirical re-sighting floors, including the FY2021–FY2022 scanner gap treated as a single span.
+4. Posterior predictive checks for the recruit size split (`sp_nL`) and the netting join (`ev_m`).
+5. Parameter summary and the density–size relationship, with a comparison to the joint two-stage fit where available.
+
+```{r fit-info}
+s <- mc$rd3_settings
+tibble(
+  Item = c("Fit completed", "Data build", "Calendar / primaries", "Chains", "Iterations / burn-in / thin", "Retained draws", "Wall time (min)", "Stage breaks (XYTE, mm TL)", "Variant"),
+  Value = c(format(file.info(mcmc_file)$mtime, "%Y-%m-%d %H:%M"),
+            format(s$BUILD_INFO$built, "%Y-%m-%d %H:%M"),
+            paste0(CAL, " / ", T_PRIM),
+            s$N_CHAINS, paste(s$N_ITER, s$N_BURNIN, s$N_THIN, sep = " / "), n_draw,
+            round(as.numeric(s$run_time), 1), paste(s$StageBreaks$XYTE, collapse = ", "), s$variant)
+) |> kable() |> kable_styling(full_width = FALSE, position = "left")
+```
+
+Species index 2 (Bonytail) is present in the model code but has no data in this single-pond build; those parameters are prior-only and are omitted throughout.
+
+## 1. Convergence
+
+```{r rhat-summary}
+rh <- tibble(node = rownames(rhat), Rhat = rhat[, 1], n_eff = n_eff[rownames(rhat)]) |>
+  mutate(family = sub("\\[.*", "", node),
+         sp2 = grepl("^(mu_phi|sigma_phi|dJ|dS|b_post|sigma_J|lpsiSL|lpsiLA|a0|a1|g_eff|mu_r|sigma_r|nu)\\[2", node)) |>
+  filter(!sp2, !is.na(Rhat))
+fam_tbl <- rh |> group_by(family) |>
+  summarise(nodes = n(), `max R-hat` = round(max(Rhat), 3), `nodes > 1.1` = sum(Rhat > 1.1),
+            `min n.eff` = round(min(n_eff)), .groups = "drop") |>
+  arrange(desc(`max R-hat`))
+fam_tbl |> kable(caption = "R-hat and effective sample size by node family (species 1 only)") |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r rhat-worst}
+rh |> filter(Rhat > 1.1) |> arrange(desc(Rhat)) |>
+  mutate(Rhat = round(Rhat, 3), n_eff = round(n_eff)) |>
+  kable(caption = "Nodes with R-hat > 1.1") |> kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r rhat-plot}
+#| fig-height: 4
+ggplot(rh, aes(x = n_eff, y = Rhat)) +
+  geom_hline(yintercept = c(1.05, 1.1), linetype = "dashed", colour = "grey50") +
+  geom_point(aes(colour = family %in% c("N_tag", "U", "RecJ", "r", "Tal", "Atot")), alpha = 0.6) +
+  scale_x_log10() +
+  scale_colour_manual(values = c("black", "steelblue"), labels = c("parameters", "abundance / recruitment"), name = NULL) +
+  labs(x = "Effective sample size (log scale)", y = "R-hat", title = "Convergence of all monitored nodes")
+```
+
+The nodes with the poorest mixing are expected to be final-season quantities (FY2026 is partial, with only seven recruits measured at the October 2025 netting) and last-season recruitment, which is weakly identified. Anything outside that set that exceeds 1.1 should be checked against the traceplots in `r trace_label`.
+
+## 2. Constraint check: modeled tagged abundance vs known alive
+
+For each primary month, a fish is *known alive* if it entered the model at or before that month, had not been removed, is counted (`count_from`), and had any PIT contact (including May–Sep) in that month or later. The posterior of `sum(N_tag[t, ])` must be at least this count; the check is applied to both the posterior mean and the lower 2.5 % bound.
+
+```{r known-alive}
+known <- map_int(seq_len(T_PRIM), function(t)
+  sum(Fish$entry_t <= t & Fish$end_t >= t & Fish$last_alive_t >= t & Fish$count_from <= t))
+ntag <- map(1:3, function(st) pcol(paste0("^N_tag\\[1, [0-9]+, ", st, "\\]$")))
+ntag_tot <- Reduce(`+`, ntag)
+ntag_df <- tibble(t = seq_len(T_PRIM), known = known,
+                  mean = colMeans(ntag_tot), lwr = apply(ntag_tot, 2, quantile, 0.025),
+                  upr = apply(ntag_tot, 2, quantile, 0.975)) |>
+  left_join(Primary |> select(t, month_start, FY), by = "t") |>
+  mutate(margin_mean = mean - known, margin_lwr = lwr - known)
+viol <- ntag_df |> filter(margin_lwr < 0)
+ggplot(ntag_df, aes(x = month_start)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "steelblue", alpha = 0.3) +
+  geom_line(aes(y = mean), colour = "steelblue") +
+  geom_line(aes(y = known), colour = "black") +
+  labs(x = NULL, y = "Tagged fish", title = "Modeled tagged abundance (blue, 95 % CI) vs fish known alive by any contact (black)")
+```
+
+```{r known-alive-table}
+tibble(Check = c("Months evaluated", "Months where lower 2.5 % bound < known alive", "Months where posterior mean < known alive",
+                 "Smallest margin (posterior mean − known alive)", "Smallest margin (2.5 % bound − known alive)"),
+       Value = c(T_PRIM, nrow(viol), sum(ntag_df$margin_mean < 0),
+                 round(min(ntag_df$margin_mean), 1), round(min(ntag_df$margin_lwr), 1))) |>
+  kable() |> kable_styling(full_width = FALSE, position = "left")
+if (nrow(viol) > 0) viol |> select(month_start, FY, known, lwr, mean, upr) |>
+  kable(caption = "Months violating the known-alive constraint", digits = 1) |> kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r ntag-stage}
+stage_df <- map_dfr(1:3, function(st)
+  tibble(t = seq_len(T_PRIM), stage = stage_lab[st], mean = colMeans(ntag[[st]]),
+         lwr = apply(ntag[[st]], 2, quantile, 0.025), upr = apply(ntag[[st]], 2, quantile, 0.975))) |>
+  left_join(Primary |> select(t, month_start), by = "t")
+ggplot(stage_df, aes(x = month_start, y = mean)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.3) +
+  geom_line() +
+  facet_wrap(~stage, ncol = 1, scales = "free_y") +
+  labs(x = NULL, y = "Tagged fish", title = "Modeled tagged abundance by stage")
+```
+
+## 3. Survival by stage vs empirical re-sighting floors
+
+### 3.1 Adults, by season
+
+The empirical floor for adult survival in season *y* is the fraction of adults known alive in October of *y* that were contacted again at or after October of *y* + 1. Fish removed (harvest or transfer) before the following October are excluded from the denominator. A fish is treated as an adult if it entered at ≥ 350 mm or had been measured at ≥ 350 mm at a netting on or before that October. Because scanning is nearly continuous and adult detection is roughly 0.4 per week, this floor is close to realized survival in well-scanned seasons. `r if (CAL == "m7") "It is far below realized survival when there was no Oct–Apr scanning (FY2021–FY2022, see 3.3), and the FY2020 and FY2021 floors are weak because those fish had to be re-seen *after* the gap (effectively survive to October 2022)." else "Under the 12-month calendar the summer deployments of 2021 and 2022 are detection occasions, so FY2021 and FY2022 are informed directly; their floors are still conditioned on being contacted in a later summer or after October 2022, and section 3.3 decomposes the gap against direct floors. The FY2020 floor is weak because there was no scanning at all from April 2020 to April 2021."` The FY2025 floor counts re-sightings only through the end of the current data (roughly five months after October 2025), so it understates survival by the fraction of adults not yet contacted this season.
+
+```{r adult-floors}
+stobs <- dd$stobs_mat[Fish$fish, , drop = FALSE]
+adult_by <- function(t) Fish$stage0 == 3 | apply(stobs[, seq_len(t), drop = FALSE] == 3, 1, any)
+floor_adult <- map_dfr(seq_len(NS - 1), function(y) {
+  t0 <- tOct[y]; t1 <- tOct[y + 1]
+  alive0 <- Fish$entry_t <= t0 & Fish$count_from <= t0 & Fish$last_alive_t >= t0 & adult_by(t0)
+  not_rem <- !(Fish$removed == 1 & Fish$end_t < t1)
+  idx <- alive0 & not_rem
+  tibble(season = y, n_adults = sum(idx), n_reseen = sum(Fish$last_alive_t[idx] >= t1))
+}) |> mutate(floor = n_reseen / n_adults)
+lphiA <- pcol("^lphiA\\[1, ")
+phiA_ann <- plogis(lphiA)^12
+adult_tbl <- season_tbl |>
+  left_join(floor_adult, by = "season") |>
+  mutate(model = colMeans(phiA_ann), lwr = apply(phiA_ann, 2, quantile, 0.025), upr = apply(phiA_ann, 2, quantile, 0.975),
+         gap = model - floor, flag = if_else(!is.na(floor) & upr < floor, "below floor", ""))
+adult_tbl |> select(FY, n_adults, n_reseen, floor, model, lwr, upr, gap, flag) |>
+  kable(digits = 3, caption = "Posterior annual adult survival (12 months at the season's monthly rate) vs empirical re-sighting floor",
+        col.names = c("Season", "Adults alive Oct", "Re-seen ≥ next Oct", "Floor", "Model mean", "2.5 %", "97.5 %", "Model − floor", "")) |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+```{r adult-floors-plot}
+#| fig-height: 4.5
+ggplot(adult_tbl, aes(x = FY)) +
+  geom_pointrange(aes(y = model, ymin = lwr, ymax = upr), colour = "steelblue") +
+  geom_point(aes(y = floor), shape = 4, size = 3, stroke = 1.2, na.rm = TRUE) +
+  ylim(0.4, 1) +
+  labs(x = NULL, y = "Annual adult survival", title = "Posterior annual adult survival (blue) vs empirical re-sighting floor (×)",
+       caption = paste(if (CAL == "m7") "FY2021 and FY2022 floors are not meaningful individually (no Oct–Apr scanning Oct 2020–Apr 2022); see 3.3."
+                       else "FY2020 floor is conditioned on surviving to the summer 2021 deployments; see 3.3.",
+                       "FY2025 floor is truncated by the end of the data."))
+```
+
+### 3.2 Netting-tagged juveniles, by cohort
+
+For each fall cohort of netting-tagged fish that entered at < 350 mm, the floor is the fraction contacted at or after the following October. The model-implied comparison is survival over the calendar months from the netting to the next October, using the post-release rate (`lphiS + b_post[1, 2]`) for the first six months and the S-stage rate afterwards; maturation into L or A during that span (which raises survival) is ignored, so the model curve is a slight underestimate of what the model actually implies. `r if (have_alt) paste0("The last columns give the same quantity from the ", alt_lab, " over the same calendar span.") else ""`
+
+```{r juv-floors}
+lphiS <- pcol("^lphiS\\[1, ")
+bpost2 <- post[, "b_post[1, 2]"]
+juv_floor <- Fish |> filter(origin == 2, stage0 < 3) |>
+  mutate(season = Primary$season[entry_t]) |>
+  group_by(season) |>
+  summarise(n_tagged = n(), entry_t = round(median(entry_t)), .groups = "drop") |>
+  left_join(season_tbl, by = "season") |>
+  filter(season < NS) |>
+  mutate(t_next = .env$tOct[season + 1], months = mdiff(entry_t, t_next))
+juv_floor$n_reseen <- map2_int(juv_floor$season, juv_floor$t_next, function(y, t1) {
+  idx <- Fish$origin == 2 & Fish$stage0 < 3 & Primary$season[Fish$entry_t] == y & !(Fish$removed == 1 & Fish$end_t < t1)
+  sum(Fish$last_alive_t[idx] >= t1)
+})
+juv_floor$n_denom <- map2_int(juv_floor$season, juv_floor$t_next, function(y, t1)
+  sum(Fish$origin == 2 & Fish$stage0 < 3 & Primary$season[Fish$entry_t] == y & !(Fish$removed == 1 & Fish$end_t < t1)))
+juv_model <- function(p, y, m) {
+  m_post <- min(6, m); m_rest <- max(0, m - 6)
+  lS <- p[, sprintf("lphiS[1, %d]", y)]; b2 <- p[, "b_post[1, 2]"]
+  plogis(lS + b2)^m_post * plogis(lS)^m_rest
+}
+model_juv <- map(seq_len(nrow(juv_floor)), function(i) juv_model(post, juv_floor$season[i], juv_floor$months[i]))
+juv_tbl <- juv_floor |>
+  mutate(floor = n_reseen / n_denom,
+         model = map_dbl(model_juv, mean), lwr = map_dbl(model_juv, quantile, 0.025), upr = map_dbl(model_juv, quantile, 0.975),
+         rec_total = RecruitIndex$rec_total[match(season, RecruitIndex$season)])
+juv_cols <- c("Cohort", "Recruits handled", "Tagged < 350 mm", "Re-seen", "Months to next Oct", "Floor", "Model mean", "2.5 %", "97.5 %")
+if (have_alt) {
+  alt_juv <- map(seq_len(nrow(juv_floor)), function(i) juv_model(alt_post, juv_floor$season[i], juv_floor$months[i]))
+  juv_tbl <- juv_tbl |> mutate(alt_model = map_dbl(alt_juv, mean), alt_lwr = map_dbl(alt_juv, quantile, 0.025), alt_upr = map_dbl(alt_juv, quantile, 0.975))
+  juv_cols <- c(juv_cols, paste(alt_lab, c("mean", "2.5 %", "97.5 %")))
+}
+juv_tbl |> select(FY, rec_total, n_denom, n_reseen, months, floor, model, lwr, upr, any_of(c("alt_model", "alt_lwr", "alt_upr"))) |>
+  kable(digits = 3, caption = paste0("Netting-tagged juvenile cohorts: fraction re-seen at or after the next October vs model-implied survival over the same span (", this_lab, ")"),
+        col.names = juv_cols) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r juv-floors-plot}
+#| fig-height: 4.5
+juv_long <- juv_tbl |> transmute(FY, floor, Fit = this_lab, model, lwr, upr)
+if (have_alt) juv_long <- bind_rows(juv_long, juv_tbl |> transmute(FY, floor, Fit = alt_lab, model = alt_model, lwr = alt_lwr, upr = alt_upr))
+ggplot(juv_long, aes(x = FY)) +
+  geom_pointrange(aes(y = model, ymin = lwr, ymax = upr, colour = Fit), position = position_dodge(width = 0.5)) +
+  geom_point(aes(y = floor), shape = 4, size = 3, stroke = 1.2) +
+  scale_colour_manual(values = c("steelblue", "grey55"), breaks = c(this_lab, alt_lab), name = NULL) +
+  labs(x = NULL, y = "Survival to next October", title = "Netting-tagged juveniles: model-implied survival vs fraction re-seen (×)",
+       caption = "FY2021 and FY2022 cohorts had no Oct–Apr scanning after tagging (summer deployments only); their floors are weak.") +
+  theme(legend.position = "bottom")
+```
+
+### 3.3 The FY2021–FY2022 scanner gap
+
+There was no Oct–Apr scanning at YCB between April 2020 and October 2022 apart from one week at the end of April 2021. Scanners *were* deployed in the intervening summers — submersible units from 30 April to 4 August 2021 (~2,300 scan hours, 200 fish contacted in May 2021), 10–18 May 2022 (~760 hours, 239 fish), and 3 August to 22 September 2022 (~2,200 hours, 222 fish). `r if (CAL == "m7") "Under the Oct–Apr calendar those May–Sep contacts are not detection occasions; they enter only as known-alive constraints that prim_floor() maps to the April of the same fiscal year, so lphiA for FY2021 and FY2022 are identified only through their product and the summer-to-summer interval is unused." else "Under the 12-month calendar those summer months are primary periods with detections, so lphiA for FY2021 and FY2022 are informed directly and the summer-to-summer interval (May–Jul 2021 → May–Sep 2022) is a scanned-to-scanned span the model must match."` Two spans are reported: October 2020 → October 2022 (24 months) and, because the naive October 2020 floor is conditioned on having been seen afterwards, the last well-scanned month March 2020 → October 2022 (31 months: 7 months at the FY2020 rate, then 12 + 12).
+
+```{r gap-span}
+t_mar20 <- t_of("2020-03"); t_oct20 <- t_of("2020-10"); t_oct22 <- t_of("2022-10")
+span_floor <- function(t0, t1) {
+  alive0 <- Fish$entry_t <= t0 & Fish$count_from <= t0 & Fish$last_alive_t >= t0 & adult_by(t0)
+  idx <- alive0 & !(Fish$removed == 1 & Fish$end_t < t1)
+  c(n = sum(idx), reseen = sum(Fish$last_alive_t[idx] >= t1))
+}
+f24 <- span_floor(t_oct20, t_oct22); f31 <- span_floor(t_mar20, t_oct22)
+phi <- plogis(lphiA)
+prod24 <- phi[, 5]^12 * phi[, 6]^12
+prod31 <- phi[, 4]^mdiff(t_mar20, t_oct20) * phi[, 5]^12 * phi[, 6]^12
+tibble(Span = c("Oct 2020 → Oct 2022 (24 mo)", "Mar 2020 → Oct 2022 (31 mo)"),
+       `Adults alive at start` = c(f24["n"], f31["n"]), `Re-seen after end` = c(f24["reseen"], f31["reseen"]),
+       Floor = c(f24["reseen"] / f24["n"], f31["reseen"] / f31["n"]),
+       `Model mean` = c(mean(prod24), mean(prod31)),
+       `2.5 %` = c(quantile(prod24, 0.025), quantile(prod31, 0.025)),
+       `97.5 %` = c(quantile(prod24, 0.975), quantile(prod31, 0.975))) |>
+  kable(digits = 3, caption = "Adult survival across the scanner gap") |> kable_styling(full_width = FALSE, position = "left")
+```
+
+The 24-month floor is biased upward because, with no Oct–Apr scanning inside the window, being "known alive" in October 2020 mostly means having been contacted after October 2022. The 31-month floor avoids that and is the appropriate comparison; a model estimate above it indicates that the loss inside the gap cannot be placed where it happened.
+
+```{r gap-legs, eval=CAL == "m12"}
+# Decompose the 31-month span into legs bounded by scanned months, using summer
+# detections (only available as y under m12). Cohort: adults known alive in
+# March 2020 with no removal before October 2022.
+seen_in <- function(ts) rowSums(dd$y_mat[Fish$fish, ts, drop = FALSE]) > 0
+t_may21 <- t_of("2021-05"); t_may22 <- t_of("2022-05")
+S0 <- Fish$entry_t <= t_mar20 & Fish$count_from <= t_mar20 & Fish$last_alive_t >= t_mar20 & adult_by(t_mar20) & !(Fish$removed == 1 & Fish$end_t < t_oct22)
+S1 <- S0 & seen_in(t_may21:(t_may21 + 2))
+S2 <- S1 & seen_in(t_may22:(t_may22 + 4))
+S3 <- S2 & Fish$last_alive_t >= t_oct22
+leg_model <- function(ta, tb) {
+  s <- Primary$season[ta:(tb - 1)]; out <- rep(1, n_draw)
+  for (y in unique(s)) out <- out * phi[, y]^sum(s == y)
+  out
+}
+legs <- tibble(Leg = c("Mar 2020 → May–Jul 2021", "May–Jul 2021 → May–Sep 2022", "May–Sep 2022 → ≥ Oct 2022", "Mar 2020 → ≥ Oct 2022 (whole)"),
+               `Adults at start` = c(sum(S0), sum(S1), sum(S2), sum(S0)),
+               `Seen at end` = c(sum(S1), sum(S2), sum(S3), sum(S0 & Fish$last_alive_t >= t_oct22)),
+               model = list(leg_model(t_mar20, t_may21), leg_model(t_may21, t_may22), leg_model(t_may22, t_oct22), leg_model(t_mar20, t_oct22))) |>
+  mutate(Floor = `Seen at end` / `Adults at start`, `Model mean` = map_dbl(model, mean),
+         `2.5 %` = map_dbl(model, quantile, 0.025), `97.5 %` = map_dbl(model, quantile, 0.975), `Model − floor` = `Model mean` - Floor) |>
+  select(-model)
+legs |> kable(digits = 3, caption = "Gap decomposition: direct floors on the March 2020 adult cohort vs the model's season-constant monthly rates over each leg") |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+`r if (CAL == "m12") "The middle leg is bounded by scanning at both ends and is where the 12-month calendar adds information; the model should match its floor closely. The first leg spans April 2020 → April 2021 with no scanning at all, and the third contains the late-summer 2022 loss that a season-constant monthly rate spreads over all of FY2022 — for both, the model can only shrink toward the season mean, so the direct floors are the better estimate and should be what is reported for those stretches." else "In reporting, FY2021 and FY2022 should be given as this single span, not by season; the 12-month-calendar fit (data/YCB3S_MCMC_m12.RData) separates them."`
+
+### 3.4 Season-specific juvenile deviations
+
+```{r epsJ}
+epsJ <- pcol("^eps_J\\[1, ")
+lphiL <- pcol("^lphiL\\[1, ")
+eps_tbl <- season_tbl |>
+  mutate(eps_mean = colMeans(epsJ), eps_lwr = apply(epsJ, 2, quantile, 0.025), eps_upr = apply(epsJ, 2, quantile, 0.975),
+         phiL_ann = colMeans(plogis(lphiL)^12), phiL_lwr = apply(plogis(lphiL)^12, 2, quantile, 0.025), phiL_upr = apply(plogis(lphiL)^12, 2, quantile, 0.975),
+         rec_total = RecruitIndex$rec_total[match(season, RecruitIndex$season)],
+         Rhat = rhat[paste0("eps_J[1, ", season, "]"), 1])
+eps_tbl |> select(FY, rec_total, eps_mean, eps_lwr, eps_upr, phiL_ann, phiL_lwr, phiL_upr, Rhat) |>
+  kable(digits = 3, caption = "Centered season deviation eps_J on juvenile (L-stage) survival and the implied annual L-stage survival (12 months, no post-release offset)",
+        col.names = c("Season", "Recruits handled", "eps_J mean", "2.5 %", "97.5 %", "Annual phi_L", "2.5 %", "97.5 %", "R-hat")) |>
+  kable_styling(full_width = FALSE, position = "left")
+```
+
+## 4. Posterior predictive checks
+
+### 4.1 Recruit size split (`sp_nL ~ Binomial(n0, pLg)`)
+
+```{r ppc-split}
+pLg <- pcol("^pLg\\[1, ")
+split_tbl <- SplitObs |> left_join(season_tbl, by = "season")
+set.seed(4417)
+split_pp <- map_dfr(seq_len(nrow(split_tbl)), function(i) {
+  y <- split_tbl$season[i]; n0 <- split_tbl$n0[i]
+  sim <- rbinom(n_draw, n0, pLg[, y])
+  tibble(season = y, n0 = n0, nL_obs = split_tbl$nL[i], pL_obs = split_tbl$nL[i] / n0,
+         pLg_mean = mean(pLg[, y]), pp_lwr = quantile(sim, 0.025), pp_med = median(sim), pp_upr = quantile(sim, 0.975),
+         p_tail = min(1, 2 * min(mean(sim <= split_tbl$nL[i]), mean(sim >= split_tbl$nL[i]))))
+}) |> left_join(season_tbl, by = "season")
+split_cols <- c("Season", "Measured (n0)", "Observed ≥ 300", "Observed pL", "Posterior pLg", "PP 2.5 %", "PP median", "PP 97.5 %", "PP p-value")
+if (have_alt) {
+  alt_pLg_mat <- alt_post[, grep("^pLg\\[1, ", colnames(alt_post))]
+  set.seed(4417)
+  split_pp <- split_pp |> mutate(
+    alt_pLg = map_dbl(season, ~mean(alt_pLg_mat[, .x])),
+    alt_p_tail = map2_dbl(season, seq_along(season), function(y, i) {
+      sim <- rbinom(nrow(alt_post), n0[i], alt_pLg_mat[, y]); min(1, 2 * min(mean(sim <= nL_obs[i]), mean(sim >= nL_obs[i]))) }))
+  split_cols <- c(split_cols, paste(alt_lab, c("pLg", "PP p-value")))
+}
+split_pp |> select(FY, n0, nL_obs, pL_obs, pLg_mean, pp_lwr, pp_med, pp_upr, p_tail, any_of(c("alt_pLg", "alt_p_tail"))) |>
+  kable(digits = 3, caption = paste0("Observed recruits ≥ 300 mm vs posterior predictive distribution (two-sided tail probability; small values indicate misfit); ", this_lab),
+        col.names = split_cols) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r ppc-split-plot}
+#| fig-height: 4.5
+ggplot(split_pp, aes(x = FY)) +
+  geom_linerange(aes(ymin = pp_lwr / n0, ymax = pp_upr / n0), colour = "steelblue", linewidth = 1.5, alpha = 0.6) +
+  geom_point(aes(y = pLg_mean), colour = "steelblue", size = 2) +
+  geom_point(aes(y = pL_obs), shape = 4, size = 3, stroke = 1.2) +
+  labs(x = NULL, y = "Fraction of recruits ≥ 300 mm", title = "Recruit size split: posterior predictive 95 % interval (blue) vs observed (×)")
+```
+
+### 4.2 Density–size relationship
+
+```{r dens-curve}
+a0 <- post[, "a0[1]"]; a1 <- post[, "a1[1]"]
+dgrid <- seq(min(RecruitIndex$dens_std, na.rm = TRUE) - 0.3, max(RecruitIndex$dens_std, na.rm = TRUE) + 0.3, length.out = 80)
+curve <- map_dfr(dgrid, function(d) {
+  p <- plogis(a0 + a1 * d)
+  tibble(dens_std = d, rec_total = exp(d * dd$dens_scale + dd$dens_center) - 1, mean = mean(p), lwr = quantile(p, 0.025), upr = quantile(p, 0.975))
+})
+obs_pts <- split_pp |> left_join(RecruitIndex |> select(season, rec_total, dens_std), by = "season")
+ggplot(curve, aes(x = rec_total)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "steelblue", alpha = 0.3) +
+  geom_line(aes(y = mean), colour = "steelblue") +
+  geom_point(data = obs_pts, aes(y = pL_obs, size = n0)) +
+  ggrepel::geom_text_repel(data = obs_pts, aes(y = pL_obs, label = FY), size = 3) +
+  scale_x_log10() +
+  scale_size_area(max_size = 8, name = "Recruits measured") +
+  labs(x = "Recruits handled at the fall netting (log scale)", y = "Fraction ≥ 300 mm",
+       title = "Density-dependent recruit size: logit(pLg) = a0 + a1·dens")
+```
+
+```{r a1-table}
+tibble(Parameter = c("a0 (logit pL at mean log density)", "a1 (per SD of log recruit density)"),
+       Mean = c(mean(a0), mean(a1)), `2.5 %` = c(quantile(a0, 0.025), quantile(a1, 0.025)), `97.5 %` = c(quantile(a0, 0.975), quantile(a1, 0.975))) |>
+  kable(digits = 3) |> kable_styling(full_width = FALSE, position = "left")
+```
+
+Note that the recruit density covariate is standardized log(recruits + 1) per unit area with `Area = 1` for YCB (surface area not yet available), so `a1` is a per-SD effect of log recruit *number* until `data/BWPondAreas.csv` is populated.
+
+### 4.3 Netting join (`ev_m ~ Binomial(ev_n, N_tag / (N_tag + U_available))`)
+
+Each row is one netting event × stage: `n` fish handled, `m` of them previously tagged. The posterior predictive draws use the monitored `N_tag` at the netting month and the untagged pool `U` for that season less untagged removals earlier in the same season.
+
+```{r ppc-netting}
+U <- pcol("^U\\[1, ")
+u_col <- function(y, st) U[, paste0("U[1, ", y, ", ", st, "]")]
+remU_before <- dd$RD_constants$ev_remU_before
+Netting$remU_before <- remU_before[Netting$e]
+set.seed(9026)
+net_pp <- map_dfr(seq_len(nrow(Netting)), function(i) {
+  r <- Netting[i, ]
+  Tal <- ntag[[r$stage]][, r$t_e]
+  Uav <- pmax(0, u_col(r$season, r$stage) - r$remU_before)
+  pm <- (Tal + 1e-9) / (Tal + Uav + 2e-9)
+  sim <- rbinom(n_draw, r$n, pm)
+  tibble(EventMonth = r$EventMonth, season = r$season, stage = stage_lab[r$stage], n = r$n, m_obs = r$m,
+         pm_mean = mean(pm), pp_lwr = quantile(sim, 0.025), pp_med = median(sim), pp_upr = quantile(sim, 0.975),
+         p_tail = min(1, 2 * min(mean(sim <= r$m), mean(sim >= r$m))),
+         Tal_mean = mean(Tal), Uav_mean = mean(Uav))
+}) |> left_join(season_tbl |> select(season, FY), by = "season")
+net_pp |> select(FY, EventMonth, stage, n, m_obs, pm_mean, pp_lwr, pp_med, pp_upr, p_tail, Tal_mean, Uav_mean) |>
+  kable(digits = c(0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0), caption = "Netting events: previously tagged fish among those handled vs posterior predictive",
+        col.names = c("Season", "Event", "Stage", "Handled", "Tagged (obs)", "Posterior p", "PP 2.5 %", "PP median", "PP 97.5 %", "PP p-value", "N_tag", "U available")) |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r ppc-netting-plot}
+#| fig-height: 6
+net_pp |> filter(n >= 5) |>
+  mutate(label = paste(FY, substr(stage, 1, 1))) |>
+  ggplot(aes(x = EventMonth)) +
+  geom_linerange(aes(ymin = pp_lwr / n, ymax = pp_upr / n), colour = "steelblue", linewidth = 1.5, alpha = 0.6) +
+  geom_point(aes(y = pm_mean), colour = "steelblue", size = 2) +
+  geom_point(aes(y = m_obs / n), shape = 4, size = 3, stroke = 1.2) +
+  facet_wrap(~stage, ncol = 1) +
+  labs(x = NULL, y = "Fraction previously tagged", title = "Netting join: posterior predictive 95 % interval (blue) vs observed (×), events with ≥ 5 fish handled")
+```
+
+Rows with `Tagged (obs) = 0` and hundreds handled (the S-stage rows) are fit trivially by a large untagged pool; the informative rows are the adult ones, where the tagged fraction pins the ratio of tagged to untagged adults. Small two-sided tail probabilities in the adult rows would indicate that `N_tag` and `U[·, 3]` cannot jointly match the netting data.
+
+## 5. Parameter summary
+
+```{r param-table}
+mon <- function(l) plogis(l)
+par_rows <- list(
+  list("mu_phi[1]", "Mean season logit monthly adult survival", function(x) mon(x)^12, "annual survival at mu_phi"),
+  list("sigma_phi[1]", "SD of season adult-survival deviations (logit)", NULL, NA),
+  list("dJ[1]", "Juvenile (L) offset on logit monthly survival", function(x) mon(post[, "mu_phi[1]"] + x)^12, "annual L survival at mu_phi"),
+  list("dS[1]", "Small-juvenile (S) additional offset", function(x) mon(post[, "mu_phi[1]"] + post[, "dJ[1]"] + x)^12, "annual S survival at mu_phi"),
+  list("sigma_J[1]", "SD of season juvenile deviations eps_J", NULL, NA),
+  list("b_post[1, 1]", "Post-release offset, stocked fish (adults)", function(x) mon(post[, "mu_phi[1]"] + x)^6, "6-month post-release survival (adult)"),
+  list("b_post[1, 2]", "Post-release offset, netting-tagged fish", function(x) mon(post[, "mu_phi[1]"] + post[, "dJ[1]"] + x)^6, "6-month post-release survival (L)"),
+  list("lpsiSL[1]", "logit monthly S → L transition", function(x) 1 - (1 - mon(x))^12, "annual probability of S → L"),
+  list("lpsiLA[1]", "logit monthly L → A transition", function(x) 1 - (1 - mon(x))^12, "annual probability of L → A"),
+  list("lp[1, 1]", "logit weekly detection, S and L (shared)", mon, "weekly detection at mean effort"),
+  list("lp[1, 3]", "logit weekly detection, A", mon, "weekly detection at mean effort"),
+  list("g_eff[1]", "Effect of standardized log scan hours on logit detection", NULL, NA),
+  list("a0[1]", "logit fraction ≥ 300 mm at mean log recruit density", mon, "pL at mean density"),
+  list("a1[1]", "Change in logit fraction ≥ 300 mm per SD log density", NULL, NA),
+  list("mu_r[1]", "Mean log recruits per adult", exp, "recruits per adult"),
+  list("sigma_r[1]", "SD of log recruitment rate", NULL, NA),
+  list("nu[1]", "Unexplained adult appearances per season", NULL, NA),
+  list("U0[1, 3]", "Untagged adults, October 2016", NULL, NA))
+param_tbl <- map_dfr(par_rows, function(r) {
+  x <- post[, r[[1]]]
+  q <- qsum(x)
+  d <- if (is.null(r[[3]])) c(NA, NA, NA) else { dx <- r[[3]](x); c(mean(dx), quantile(dx, c(0.025, 0.975))) }
+  tibble(Node = r[[1]], Meaning = r[[2]], Mean = q["mean"], `2.5 %` = q["lwr"], `97.5 %` = q["upr"],
+         Derived = r[[4]], `Derived mean` = d[1], `Derived 2.5 %` = d[2], `Derived 97.5 %` = d[3],
+         Rhat = rhat[r[[1]], 1], n_eff = round(n_eff[r[[1]]]))
+})
+param_tbl |> kable(digits = 3, caption = "Core parameters (species 1 = Razorback Sucker) with derived quantities") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+### 5.1 Untagged pool and recruitment
+
+Recruitment (`RecJ`, `r`) is weakly identified in this build (see AGENTS.md); it is shown here for completeness and should be treated as a nuisance quantity until it is constrained by the recruit index or by a joint fit with the Imperial Ponds.
+
+```{r untagged}
+Uadult <- U[, paste0("U[1, ", seq_len(NS), ", 3]")]
+Ujuv <- U[, paste0("U[1, ", seq_len(NS), ", 1]")] + U[, paste0("U[1, ", seq_len(NS), ", 2]")]
+RecJ <- pcol("^RecJ\\[1, ")
+Atot <- pcol("^Atot\\[1, ")
+u_tbl <- season_tbl |>
+  mutate(`Untagged adults` = colMeans(Uadult), `UA 2.5 %` = apply(Uadult, 2, quantile, 0.025), `UA 97.5 %` = apply(Uadult, 2, quantile, 0.975),
+         `Untagged juveniles` = colMeans(Ujuv), `UJ 2.5 %` = apply(Ujuv, 2, quantile, 0.025), `UJ 97.5 %` = apply(Ujuv, 2, quantile, 0.975),
+         `Tagged adults Oct` = colMeans(ntag[[3]][, tOct]),
+         rec_total = RecruitIndex$rec_total[match(season, RecruitIndex$season)]) |>
+  select(-season, -tOct, -tApr)
+u_tbl |> kable(digits = 0, caption = "Untagged pool at the start of each season (October) and tagged adults in October; recruits handled at the fall netting for reference") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r recj}
+tibble(season = seq_len(NS - 1)) |> left_join(season_tbl, by = "season") |>
+  mutate(`Season producing recruits` = FY, `Recruits to next fall (RecJ)` = colMeans(RecJ), `2.5 %` = apply(RecJ, 2, quantile, 0.025),
+         `97.5 %` = apply(RecJ, 2, quantile, 0.975), `Adults in April (Atot)` = colMeans(Atot),
+         `Recruits handled next fall` = RecruitIndex$rec_total[match(season + 1, RecruitIndex$season)],
+         Rhat = rhat[paste0("RecJ[1, ", season, "]"), 1]) |>
+  select(-season, -FY, -tOct, -tApr) |>
+  kable(digits = c(0, 0, 0, 0, 0, 0, 2), caption = "Latent recruitment (weakly identified; for reference only)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+## 6. Comparison across archived three-stage fits
+
+The working variant was reached through a sequence of refits, each archived under `data/YCB3S_MCMC_<tag>.RData`. This section puts them side by side on the quantities that motivated each change: season adult survival (which the juvenile crashes were pulling down) and the juvenile survival offset `dJ` (which trades off against detection, post-release, and season-deviation terms). Fits that are missing from disk are skipped.
+
+```{r archive-load}
+arch <- tribble(
+  ~tag, ~label, ~file, ~change,
+  "freeLp",       "1 free lp[L]",       "../data/YCB3S_MCMC_freeLp.RData",       "First fit: separate detection intercept for L",
+  "sharedLp",     "2 shared lp[S,L]",   "../data/YCB3S_MCMC_sharedLp.RData",     "lp[j, 2] <- lp[j, 1]",
+  "bpostJ",       "3 + b_postJ",        "../data/YCB3S_MCMC_bpostJ.RData",       "Juvenile-specific post-release offset (later reverted)",
+  "epsJ",         "4 + eps_J",          "../data/YCB3S_MCMC_epsJ.RData",         "b_postJ tied to b_post; season deviation eps_J on lphiL",
+  "centeredEpsJ", "5 centered eps_J",   "../data/YCB3S_MCMC_centeredEpsJ.RData", "eps_J centered (sum-to-zero); screened scanner weeks",
+  "noCB",         "6 cB = 0, m7",       "../data/YCB3S_MCMC.RData",              "Density effect on juvenile survival removed (Oct–Apr calendar)",
+  "m12",          "7 cB = 0, m12",      "../data/YCB3S_MCMC_m12.RData",          "Same model on the 12-month calendar (May–Sep months are primaries)")
+arch <- arch |> filter(file.exists(file))
+arch_fits <- map(arch$file, function(f) { e <- new.env(); load(f, envir = e); e })
+names(arch_fits) <- arch$tag
+arch_post <- map(arch_fits, ~as.matrix(.x$rd3_samples))
+ci_str <- function(x, d = 2) sprintf(paste0("%.", d, "f (%.", d, "f–%.", d, "f)"), mean(x), quantile(x, 0.025), quantile(x, 0.975))
+node_or_na <- function(p, node) if (node %in% colnames(p)) p[, node] else rep(NA_real_, nrow(p))
+arch_meta <- map2_dfr(arch_fits, arch$label, function(e, lab) {
+  rh_e <- e$rhat3_all[, 1]
+  rh_e <- rh_e[!grepl("\\[2[,\\]]", names(rh_e)) & !is.na(rh_e)]
+  tibble(Fit = lab,
+         Calendar = e$rd3_settings$CALENDAR %||% "m7",
+         `Data build` = format(e$rd3_settings$BUILD_INFO$built %||% NA, "%m-%d %H:%M"),
+         `Wall (min)` = round(as.numeric(e$rd3_settings$run_time), 0),
+         `Max R-hat` = round(max(rh_e), 2), `Nodes > 1.1` = sum(rh_e > 1.1),
+         `dJ R-hat` = round(unname(rh_e["dJ[1]"]), 2))
+})
+arch_meta |> mutate(Change = arch$change) |> relocate(Change, .after = Fit) |>
+  kable(caption = "Archived fits in chronological order (species-1 nodes only for R-hat)") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+### 6.1 Season adult survival
+
+```{r archive-adult}
+arch_adult <- map2_dfr(arch_post, arch$label, function(p, lab) {
+  l <- p[, paste0("lphiA[1, ", seq_len(NS), "]")]
+  s <- plogis(l)^12
+  tibble(Fit = lab, season = seq_len(NS), mean = colMeans(s),
+         lwr = apply(s, 2, quantile, 0.025), upr = apply(s, 2, quantile, 0.975))
+}) |> left_join(season_tbl |> select(season, FY), by = "season") |>
+  left_join(floor_adult |> select(season, floor), by = "season")
+arch_adult |> select(Fit, FY, mean) |>
+  pivot_wider(names_from = Fit, values_from = mean) |>
+  left_join(floor_adult |> left_join(season_tbl, by = "season") |> select(FY, Floor = floor), by = "FY") |>
+  kable(digits = 3, caption = "Posterior mean annual adult survival by season and fit, with the empirical re-sighting floor") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 11)
+```
+
+```{r archive-adult-plot}
+#| fig-height: 5
+ggplot(arch_adult, aes(x = FY, y = mean, colour = Fit)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr), position = position_dodge(width = 0.7), size = 0.3) +
+  geom_point(data = distinct(arch_adult, FY, floor), aes(y = floor), inherit.aes = FALSE, x = distinct(arch_adult, FY, floor)$FY,
+             shape = 4, size = 3, stroke = 1.2, na.rm = TRUE) +
+  scale_colour_viridis_d(end = 0.9) +
+  ylim(0.4, 1) +
+  labs(x = NULL, y = "Annual adult survival", colour = NULL,
+       title = "Season adult survival across archived fits (× = re-sighting floor)",
+       caption = "In the m7 fits FY2021/FY2022 are identified only through their product; see the gap span row in 6.2. Fit 7 (m12) informs them directly.")
+```
+
+### 6.2 Juvenile survival offset and related parameters
+
+`dJ` cannot be read in isolation: in fit 3 it sits on a ridge with `b_postJ` (only their sum is informed), and in fit 4 it is confounded with the mean of the uncentered `eps_J`. The derived rows put the fits on a common footing — annual L-stage survival at `mu_phi` including the mean season deviation where one exists, the 31-month adult survival across the scanner gap, and the S → L and L → A passage rates.
+
+```{r archive-params}
+gap_prod <- function(p) {
+  phi <- plogis(p[, paste0("lphiA[1, ", 4:6, "]")])
+  phi[, 1]^mdiff(t_mar20, t_oct20) * phi[, 2]^12 * phi[, 3]^12
+}
+juv_annual <- function(p) {
+  eps_mean <- if (any(grepl("^eps_J\\[1, ", colnames(p)))) rowMeans(p[, grep("^eps_J\\[1, ", colnames(p)), drop = FALSE]) else 0
+  plogis(p[, "mu_phi[1]"] + p[, "dJ[1]"] + eps_mean)^12
+}
+param_rows <- list(
+  list("dJ[1]",        "dJ (logit offset, L vs A)",                  function(p) node_or_na(p, "dJ[1]"), 2),
+  list("b_postJ",      "b_postJ[1, 2] (fit 3 only)",                 function(p) node_or_na(p, "b_postJ[1, 2]"), 2),
+  list("dJ_bpostJ",    "dJ + b_post[J][1, 2] (netting-tagged, post-release)", function(p) p[, "dJ[1]"] + node_or_na(p, if ("b_postJ[1, 2]" %in% colnames(p)) "b_postJ[1, 2]" else "b_post[1, 2]"), 2),
+  list("juv_annual",   "Annual L survival at mu_phi (+ mean eps_J)", juv_annual, 3),
+  list("dS[1]",        "dS (S vs L)",                                function(p) node_or_na(p, "dS[1]"), 2),
+  list("cB[1]",        "cB (density on juvenile survival)",          function(p) node_or_na(p, "cB[1]"), 2),
+  list("sigma_phi[1]", "sigma_phi (season adult SD)",                function(p) node_or_na(p, "sigma_phi[1]"), 2),
+  list("sigma_J[1]",   "sigma_J (season juvenile SD)",               function(p) node_or_na(p, "sigma_J[1]"), 2),
+  list("mu_phi",       "Annual adult survival at mu_phi",            function(p) plogis(p[, "mu_phi[1]"])^12, 3),
+  list("phi21",        "Annual adult survival FY2021",               function(p) plogis(p[, "lphiA[1, 5]"])^12, 3),
+  list("phi22",        "Annual adult survival FY2022",               function(p) plogis(p[, "lphiA[1, 6]"])^12, 3),
+  list("gap",          "Adult survival Mar 2020 → Oct 2022 (31 mo)", gap_prod, 3),
+  list("b_post2",      "b_post[1, 2] (netting-tagged post-release)", function(p) node_or_na(p, "b_post[1, 2]"), 2),
+  list("g_eff",        "g_eff (effort slope on logit detection)",    function(p) node_or_na(p, "g_eff[1]"), 2),
+  list("lp1",          "Weekly detection S (lp[1, 1])",              function(p) plogis(p[, "lp[1, 1]"]), 2),
+  list("lp2",          "Weekly detection L (lp[1, 2])",              function(p) plogis(p[, "lp[1, 2]"]), 2),
+  list("lp3",          "Weekly detection A (lp[1, 3])",              function(p) plogis(p[, "lp[1, 3]"]), 2),
+  list("psiSL",        "Monthly S → L probability",                  function(p) plogis(p[, "lpsiSL[1]"]), 3),
+  list("psiLA",        "Monthly L → A probability",                  function(p) plogis(p[, "lpsiLA[1]"]), 3),
+  list("a1[1]",        "a1 (density on recruit size)",               function(p) node_or_na(p, "a1[1]"), 2))
+arch_par <- map_dfr(param_rows, function(r) {
+  vals <- map_chr(arch_post, function(p) { x <- r[[3]](p); if (all(is.na(x))) "—" else ci_str(x, r[[4]]) })
+  tibble(Quantity = r[[2]], !!!set_names(as.list(vals), arch$label))
+})
+arch_par |> kable(caption = "Posterior mean (95 % CI) by fit; — = not in that model") |>
+  kable_styling(full_width = FALSE, position = "left", font_size = 10)
+```
+
+```{r archive-dj-plot}
+#| fig-height: 4
+map2_dfr(arch_post, arch$label, function(p, lab)
+  tibble(Fit = lab, Quantity = c("dJ (logit)", "Annual L survival at mu_phi (+ mean eps_J)"),
+         mean = c(mean(p[, "dJ[1]"]), mean(juv_annual(p))),
+         lwr = c(quantile(p[, "dJ[1]"], 0.025), quantile(juv_annual(p), 0.025)),
+         upr = c(quantile(p[, "dJ[1]"], 0.975), quantile(juv_annual(p), 0.975)))) |>
+  ggplot(aes(x = Fit, y = mean)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr)) +
+  facet_wrap(~Quantity, scales = "free_y") +
+  labs(x = NULL, y = NULL, title = "Juvenile survival offset across archived fits") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+Reading across the sequence: sharing juvenile detection (fit 2) removed the low-detection L sink and moved its mass into `dJ`; the juvenile post-release offset (fit 3) changed nothing but created a `dJ`/`b_postJ` ridge; `eps_J` (fit 4) released adult survival in FY2017 and FY2023 toward their floors, at the cost of a `dJ`/mean(`eps_J`) confound; centering (fit 5) resolved that confound without moving survival — fit 5 was also the first on the screened data build (dead scanner weeks removed), which is what lifts weekly detection from about 0.45 to 0.50 for all stages; and dropping `cB` (fit 6) removed an unidentified parameter, again with no material change to survival. Adult survival in the well-scanned seasons and the 31-month gap product are stable across fits 4–6, which is the reassurance sought here: the reported survival does not depend on the parameterization choices made after `eps_J` was introduced. Fit 7 changes the data, not the model: with May–Sep months as primary periods, FY2021 and FY2022 separate (the m7 fits could only place their product), `sigma_phi` falls accordingly, and the netting-tagged post-release penalty `b_post[1, 2]` grows while `dJ` shrinks — the summer detections after a fall netting show that the loss of small fish is concentrated in the first months at large rather than spread across the year.
+
+## 7. Comparison with the joint two-stage fit
+
+```{r joint-compare}
+joint_file <- "../data/BWRobustDesign_MCMC.RData"
+have_joint <- file.exists(joint_file)
+if (have_joint) {
+  jm <- new.env(); load(joint_file, envir = jm)
+  jpost <- as.matrix(jm$rd_samples)
+  jl <- jpost[, grep("^lphiA\\[1, ", colnames(jpost))]
+  jphi <- plogis(jl)^12
+  cmp <- season_tbl |>
+    mutate(`3-stage` = adult_tbl$model, `3S 2.5 %` = adult_tbl$lwr, `3S 97.5 %` = adult_tbl$upr,
+           `Joint 2-stage` = colMeans(jphi), `J 2.5 %` = apply(jphi, 2, quantile, 0.025), `J 97.5 %` = apply(jphi, 2, quantile, 0.975),
+           Floor = adult_tbl$floor) |>
+    select(-season, -tOct, -tApr)
+  cmp |> kable(digits = 3, caption = paste0("Annual adult survival at YCB: three-stage fit vs joint two-stage fit (joint fit dated ",
+                                            format(file.info(joint_file)$mtime, "%Y-%m-%d"), ")")) |>
+    kable_styling(full_width = FALSE, position = "left")
+}
+```
+
+```{r joint-compare-plot}
+#| fig-height: 4.5
+if (have_joint) {
+  cmp |> select(FY, `3-stage`, `Joint 2-stage`, `3S 2.5 %`, `3S 97.5 %`, `J 2.5 %`, `J 97.5 %`) |>
+    pivot_longer(c(`3-stage`, `Joint 2-stage`), names_to = "Model", values_to = "mean") |>
+    mutate(lwr = if_else(Model == "3-stage", `3S 2.5 %`, `J 2.5 %`), upr = if_else(Model == "3-stage", `3S 97.5 %`, `J 97.5 %`)) |>
+    ggplot(aes(x = FY, y = mean, colour = Model)) +
+    geom_pointrange(aes(ymin = lwr, ymax = upr), position = position_dodge(width = 0.5)) +
+    geom_point(data = adult_tbl, aes(y = floor), inherit.aes = FALSE, x = adult_tbl$FY, shape = 4, size = 3, stroke = 1.2, na.rm = TRUE) +
+    ylim(0.4, 1) +
+    labs(x = NULL, y = "Annual adult survival", title = "YCB adult survival: three-stage vs joint two-stage model (× = re-sighting floor)")
+}
+```
+
+```{r joint-compare-note, results="asis"}
+if (have_joint) {
+  jd <- new.env(); load("../data/BWRobustDesign_data.RData", envir = jd)
+  stale <- file.info(joint_file)$mtime < file.info("../data/BWRobustDesign_data.RData")$mtime
+  if (stale) cat("**Caveat:** the joint two-stage fit predates the current `BWRobustDesign_data.RData` build (scanner-week screening), so it was fitted on different detection availability. Refit the joint model before drawing quantitative conclusions from this comparison.\n")
+  sj <- jpost[, "sigma_phi[1]"]
+  cat(sprintf("\n`sigma_phi[1]`: three-stage %.2f (%.2f–%.2f) vs joint two-stage %.2f (%.2f–%.2f).\n",
+              mean(post[, "sigma_phi[1]"]), quantile(post[, "sigma_phi[1]"], 0.025), quantile(post[, "sigma_phi[1]"], 0.975),
+              mean(sj), quantile(sj, 0.025), quantile(sj, 0.975)))
+} else {
+  cat("`data/BWRobustDesign_MCMC.RData` not found; comparison skipped.\n")
+}
+```
+
+## 8. Summary of validation status
+
+```{r status, results="asis"}
+below <- adult_tbl |> filter(flag == "below floor", !FY %in% c("FY2021", "FY2022"))
+cat(sprintf("- **Known-alive constraint:** %s (%d of %d months; smallest margin of the posterior mean %.1f fish).\n",
+            if (nrow(viol) == 0) "satisfied in every month" else "violated", T_PRIM - nrow(viol), T_PRIM, min(ntag_df$margin_mean)))
+cat(sprintf("- **Adult survival vs floors:** %s.\n",
+            if (nrow(below) == 0) "no well-scanned season has a 97.5 % bound below its empirical floor"
+            else paste("seasons with the 97.5 % bound below the floor:", paste(below$FY, collapse = ", "))))
+cat(sprintf("- **Scanner-gap span (Mar 2020 → Oct 2022):** model %.3f (%.3f–%.3f) vs floor %.3f.\n",
+            mean(prod31), quantile(prod31, 0.025), quantile(prod31, 0.975), f31["reseen"] / f31["n"]))
+cat(sprintf("- **Recruit size split:** %d of %d seasons have a posterior predictive p-value below 0.05.\n",
+            sum(split_pp$p_tail < 0.05), nrow(split_pp)))
+cat(sprintf("- **Netting join:** %d of %d event-stage rows have a posterior predictive p-value below 0.05 (%d of %d adult rows).\n",
+            sum(net_pp$p_tail < 0.05), nrow(net_pp), sum(net_pp$p_tail < 0.05 & grepl("^A", net_pp$stage)), sum(grepl("^A", net_pp$stage))))
+cat(sprintf("- **Convergence:** %d monitored nodes with R-hat > 1.1 (max %.2f); species-1 hyperparameters max R-hat %.2f.\n",
+            sum(rh$Rhat > 1.1), max(rh$Rhat), max(rh$Rhat[!rh$family %in% c("N_tag", "U", "RecJ", "r", "Tal", "Atot", "eps_J", "lphiA", "lphiL", "lphiS", "pLg")])))
+```
+
+Open items carried forward from the model notes: `r if (CAL == "m12") "the model is still above the direct floors on the two legs of the 2020–2022 gap that are unscanned on one side (April 2020 → April 2021, and the late-summer 2022 loss), because a season-constant monthly rate cannot localize mortality within a season" else "the FY2021–FY2022 gap estimate sits above its 31-month floor because of hierarchical shrinkage with no in-gap detections"`; latent recruitment is not credibly identified; and pond surface area is still needed before the density covariate is comparable across ponds (Phase 4).

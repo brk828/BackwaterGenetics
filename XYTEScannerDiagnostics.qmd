@@ -1,0 +1,350 @@
+---
+title: "PIT Scanner Diagnostics — Razorback Sucker (Yuma Cove Backwater and Imperial Ponds 1, 3, 4)"
+subtitle: "Monthly scanning effort, contact rates, and data sufficiency for robust-design modeling"
+author: "Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+load("data/ReportingData.RData")
+theme_set(theme_bw(base_size = 12))
+xyte_sites <- tibble(
+  location = c("Yuma Cove backwater", "IPCA (Pond 1)", "IPCA (Pond 3)", "IPCA (Pond 4)"),
+  LID = c(592L, 1043L, 1045L, 1046L),
+  Site = factor(c("YCB", "Pond 1", "Pond 3", "Pond 4"), levels = c("YCB", "Pond 1", "Pond 3", "Pond 4")),
+  # First month of the monitoring record and first full fiscal year for each site
+  start_month = as.Date(c("2013-02-01", "2016-12-01", "2016-12-01", "2016-12-01")),
+  start_fy = c(2014L, 2017L, 2017L, 2017L)
+)
+fy_of <- function(d) year(d) + (month(d) > 9)
+moy_levels <- c("Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep")
+```
+
+## Purpose
+
+This report summarizes passive PIT-scanner effort and tag-contact rates for the four Razorback Sucker (XYTE) sites in the backwater program: Yuma Cove Backwater (YCB) on Lake Mohave and Ponds 1, 3, and 4 at the Imperial Ponds Conservation Area. The goal is to judge, site by site, whether the scanning record is dense and consistent enough to support the joint robust-design mark-recapture model, and to show how contact rates relate to season and to the size of the tagged population. It is the Razorback Sucker companion to `IPGIELScannerDiagnostics.qmd` and follows the same methods.
+
+Two things make this non-trivial:
+
+1. **Deployments span months.** A scanner deployed March 15 and retrieved April 15 contributes effort to both March and April. Effort and contacts are therefore split by calendar day and re-aggregated to month, so each month is credited only with the hours actually scanned inside it.
+2. **Contact rates are confounded with population size.** A low contact rate can mean fish are inactive (seasonal), that scanners were down, or that few tagged fish remain alive. The plots below separate these by pairing contact rate with effort and with the minimum number of tagged fish known to be alive.
+
+The record at YCB begins with the February 2013 stocking and is roughly four years longer than the Imperial Ponds record, which begins with the December 2016 stocking. Fiscal-year summaries therefore start at FY2014 for YCB (the first full Oct–Apr window) and FY2017 for the Imperial Ponds.
+
+## Methods
+
+### Splitting deployments into monthly effort
+
+Each deployment record in `StudyBWEffort` has a deploy and retrieve timestamp, total deployed hours, and total hours the unit was actually scanning (`ScanTimeHrs`). For each deployment the hours overlapping each calendar day were computed, then scaled by the fraction of deployed time the unit was scanning (`ScanTimeHrs / DeployedHrs`). Daily scan hours were then summed by site and month. Where multiple units ran simultaneously at a site, their hours are added, so a month can exceed the number of hours in the month. "Coverage days" counts days in the month with at least one unit scanning, regardless of how many units.
+
+```{r effort-split}
+EffortDaily <- StudyBWEffort |>
+  filter(Location %in% xyte_sites$location, DeployedHrs > 0) |>
+  mutate(scan_frac = pmin(ScanTimeHrs / DeployedHrs, 1)) |>
+  select(EID, location = Location, Deploy, Retrieve, scan_frac, UnitType, Issue) |>
+  mutate(day = map2(as.Date(Deploy), as.Date(Retrieve), ~seq(.x, .y, by = "day"))) |>
+  unnest(day) |>
+  mutate(
+    day_start = as.POSIXct(paste(day, "00:00:00"), tz = tz(Deploy)),
+    day_end = day_start + 86400,
+    hrs = as.numeric(difftime(pmin(Retrieve, day_end), pmax(Deploy, day_start), units = "hours")),
+    scan_hrs = pmax(hrs, 0) * scan_frac
+  ) |>
+  filter(scan_hrs > 0) |>
+  left_join(xyte_sites, by = "location") |>
+  filter(day >= start_month)
+EffortMonthly <- EffortDaily |>
+  mutate(month = floor_date(day, "month")) |>
+  group_by(Site, month) |>
+  summarise(
+    scan_hrs = sum(scan_hrs),
+    units = n_distinct(EID),
+    coverage_days = n_distinct(day),
+    .groups = "drop"
+  ) |>
+  mutate(days_in_month = days_in_month(month), coverage = coverage_days / days_in_month)
+```
+
+### Contacts and contact rates
+
+Contacts (`StudyBWContacts`, summarized per fish-date-hour) were restricted to PIT tags identified as Razorback Sucker in the NFWG database and to the site where the contact occurred. Three monthly metrics are reported:
+
+- **Unique fish contacted** — distinct PIT tags detected at the site that month.
+- **Proportion detected** — unique fish contacted divided by the minimum number of tagged fish known alive in that month. A fish is "known alive" in a month if it was tagged at the site on or before the last day of the month and was contacted at the site (its last local contact, `MaxScanDate`, which defaults to the tagging date for fish never scanned) on or after the first day of the month. This is deliberately month-scoped rather than the project's 90-DAL survivor definition so that fish contacted shortly after stocking are in the denominator and the proportion cannot exceed 1. Because a fish is only "known alive" through its last contact, this denominator is biased low in the most recent months, which inflates the proportion near the end of the series. At YCB, fish transferred out of the backwater drop out of the denominator at their last local contact, so harvest events appear as step drops in known alive rather than as detection failures.
+- **Contacts per 100 scan-hours** — fish-hour contact records divided by monthly scan hours; an effort-standardized detection rate that does not depend on the known-alive denominator.
+
+```{r contacts}
+Contacts <- StudyBWContacts |>
+  filter(LID %in% xyte_sites$LID, Species == "XYTE") |>
+  left_join(xyte_sites, by = "LID") |>
+  mutate(month = floor_date(Date, "month")) |>
+  filter(Date >= start_month)
+ContactsMonthly <- Contacts |>
+  group_by(Site, month) |>
+  summarise(
+    contact_records = n(),
+    unique_fish = n_distinct(PITIndex),
+    contact_days = n_distinct(Date),
+    .groups = "drop"
+  )
+last_month <- floor_date(max(EffortDaily$day), "month")
+month_grid <- xyte_sites |>
+  select(Site, start_month, start_fy) |>
+  mutate(month = map(start_month, ~seq(.x, last_month, by = "month"))) |>
+  unnest(month) |>
+  select(Site, month, start_fy)
+TaggedFish <- StudyBWAnalysis |>
+  filter(location %in% xyte_sites$location, species == "XYTE", !is.na(MaxScanDate)) |>
+  left_join(xyte_sites, by = "location") |>
+  select(Site, PITIndex, first_date, MaxScanDate)
+KnownAlive <- month_grid |>
+  mutate(month_end = ceiling_date(month, "month") - 1) |>
+  left_join(TaggedFish, by = "Site", relationship = "many-to-many") |>
+  filter(first_date <= month_end, MaxScanDate >= month) |>
+  count(Site, month, name = "known_alive")
+Monthly <- month_grid |>
+  left_join(EffortMonthly, by = c("Site", "month")) |>
+  left_join(ContactsMonthly, by = c("Site", "month")) |>
+  left_join(KnownAlive, by = c("Site", "month")) |>
+  mutate(
+    across(c(scan_hrs, units, coverage_days, coverage, contact_records, unique_fish, contact_days, known_alive), ~replace_na(.x, 0)),
+    FY = fy_of(month),
+    moy = factor(month(month, label = TRUE, abbr = TRUE), levels = moy_levels),
+    season = if_else(month(month) %in% c(10:12, 1:4), "Oct–Apr (model window)", "May–Sep"),
+    prop_detected = if_else(known_alive > 0, unique_fish / known_alive, NA_real_),
+    contacts_per_100hr = if_else(scan_hrs > 0, 100 * contact_records / scan_hrs, NA_real_),
+    fish_per_100hr = if_else(scan_hrs > 0, 100 * unique_fish / scan_hrs, NA_real_)
+  )
+```
+
+## Scanning effort over time
+
+@fig-effort shows monthly scan hours (all units combined) with the share of days in each month that had at least one unit running. Months with zero effort are gaps in the record; months with hours but low coverage indicate a unit deployed for only part of the month. Note that YCB routinely runs more units than the Imperial Ponds, so its scan-hour scale is larger.
+
+```{r}
+#| label: fig-effort
+#| fig-cap: "Monthly passive scanning effort by site. Bars are total scan hours summed across all units; the line is the fraction of days in the month with at least one unit scanning (right axis, scaled to the tallest bar in each panel)."
+#| fig-height: 9
+panel_max <- Monthly |> group_by(Site) |> summarise(max_hrs = max(scan_hrs), .groups = "drop")
+Monthly |>
+  left_join(panel_max, by = "Site") |>
+  ggplot(aes(x = month)) +
+  geom_col(aes(y = scan_hrs, fill = season), width = 28) +
+  geom_line(aes(y = coverage * max_hrs), colour = "grey20", linewidth = 0.4) +
+  facet_wrap(~Site, ncol = 1, scales = "free_y") +
+  scale_y_continuous("Scan hours (all units)") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_fill_manual(values = c("Oct–Apr (model window)" = "steelblue", "May–Sep" = "grey70")) +
+  labs(x = NULL, fill = NULL, caption = "Coverage line reaches the top of each panel when every day of the month had a scanner running.") +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: fig-effort-heat
+#| fig-cap: "Scan-day coverage by fiscal year and month. Each tile is the fraction of days in that month with at least one scanner running. Blank tiles had no scanning. The robust-design model uses Oct–Apr months as primary periods."
+#| fig-height: 7
+Monthly |>
+  filter(FY >= start_fy) |>
+  ggplot(aes(x = moy, y = factor(FY), fill = coverage)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = if_else(coverage > 0, sprintf("%.0f", scan_hrs), "")), size = 2.2) +
+  facet_wrap(~Site, scales = "free_y") +
+  scale_fill_gradient("Fraction of\ndays covered", low = "#f7fbff", high = "#08306b", limits = c(0, 1)) +
+  geom_vline(xintercept = 7.5, linetype = "dashed", colour = "grey40") +
+  labs(x = "Month (fiscal-year order)", y = "Fiscal year", caption = "Tile labels are total scan hours in the month. Dashed line separates the Oct–Apr model window from May–Sep.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Contacts, contact rates, and tagged population size
+
+@fig-rates stacks four monthly series per site: the minimum tagged population known alive, the number of unique tagged fish contacted, the proportion of known-alive fish detected, and the effort-standardized contact rate. Reading down a column makes it possible to distinguish months where few fish were detected because few were alive (known-alive is low) from months where fish were present but not detected (known-alive high, proportion detected low, effort present). At YCB the known-alive series includes both stocked fish and wild recruits tagged during netting, and the step drops in 2019–2020 and later correspond to harvest and transfer events.
+
+```{r}
+#| label: fig-rates
+#| fig-cap: "Monthly tagged population and detection metrics by site. Grey shading marks May–Sep months, which are outside the Oct–Apr model window. Open circles in the effort-standardized row mark months with fewer than 100 scan hours, where rates are unstable. Proportion detected uses month-scoped known-alive as the denominator and is inflated in the most recent year because 'known alive' depends on later contacts."
+#| fig-height: 9
+summer_bands <- Monthly |>
+  filter(season == "May–Sep") |>
+  distinct(month) |>
+  mutate(xmin = month, xmax = month %m+% months(1))
+plot_long <- Monthly |>
+  select(Site, month, scan_hrs, known_alive, unique_fish, prop_detected, contacts_per_100hr) |>
+  pivot_longer(c(known_alive, unique_fish, prop_detected, contacts_per_100hr), names_to = "metric") |>
+  mutate(
+    metric = factor(metric,
+      levels = c("known_alive", "unique_fish", "prop_detected", "contacts_per_100hr"),
+      labels = c("Tagged fish known alive", "Unique fish contacted", "Proportion detected", "Contacts per 100 scan-hr")
+    ),
+    low_effort = scan_hrs < 100 & metric == "Contacts per 100 scan-hr"
+  ) |>
+  filter(!is.na(value))
+ggplot(plot_long, aes(x = month, y = value)) +
+  geom_rect(data = summer_bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf), inherit.aes = FALSE, fill = "grey92") +
+  geom_line(colour = "grey50", linewidth = 0.3) +
+  geom_point(aes(shape = low_effort), size = 1.2) +
+  scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 1), guide = "none") +
+  facet_grid(metric ~ Site, scales = "free", switch = "y") +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(x = NULL, y = NULL) +
+  theme(strip.placement = "outside", strip.background.y = element_blank(), axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Seasonal pattern
+
+@fig-season pools years to show how detection varies with month of year. Only months with at least 100 scan hours and at least 10 tagged fish known alive are included so that low proportions reflect fish behaviour rather than scanner downtime or a near-empty pond.
+
+```{r}
+#| label: fig-season
+#| fig-cap: "Proportion of known-alive tagged Razorback Sucker detected by calendar month (fiscal-year order), pooled across years. Each point is one site-month with ≥ 100 scan hours and ≥ 10 fish known alive; boxes summarize the distribution across years."
+#| fig-height: 6
+Monthly |>
+  filter(scan_hrs >= 100, !is.na(prop_detected), known_alive >= 10) |>
+  ggplot(aes(x = moy, y = prop_detected)) +
+  geom_boxplot(outliers = FALSE, fill = "grey95") +
+  geom_jitter(aes(colour = FY), width = 0.15, size = 1.6) +
+  facet_wrap(~Site) +
+  scale_colour_viridis_c("Fiscal\nyear") +
+  geom_vline(xintercept = 7.5, linetype = "dashed", colour = "grey40") +
+  labs(x = "Month", y = "Proportion of known-alive fish detected") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Contact rate versus tagged population size
+
+If detection probability were constant, unique fish contacted would rise linearly with the number alive and proportion detected would be flat. @fig-rate-vs-n shows the actual relationship; departures from a flat line indicate that detection probability itself changes with density, season, or year, all of which matter for the model's detection sub-model. YCB spans a much wider range of tagged population sizes than any Imperial pond, which makes it the most informative site for a density effect.
+
+```{r}
+#| label: fig-rate-vs-n
+#| fig-cap: "Proportion of known-alive fish detected versus the number known alive, for months with ≥ 100 scan hours and ≥ 10 fish known alive. Colour distinguishes the Oct–Apr model window from summer months; point size is scan hours."
+#| fig-height: 6
+Monthly |>
+  filter(scan_hrs >= 100, !is.na(prop_detected), known_alive >= 10) |>
+  ggplot(aes(x = known_alive, y = prop_detected, colour = season, size = scan_hrs)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~Site, scales = "free_x") +
+  scale_colour_manual(values = c("Oct–Apr (model window)" = "steelblue", "May–Sep" = "grey60")) +
+  scale_size_continuous("Scan hours", range = c(0.8, 4)) +
+  labs(x = "Tagged fish known alive in month", y = "Proportion detected", colour = NULL) +
+  theme(legend.position = "bottom", legend.box = "vertical")
+```
+
+```{r}
+#| label: fig-unique-vs-n
+#| fig-cap: "Unique fish contacted versus number known alive, Oct–Apr months with ≥ 100 scan hours only. The dashed line is 1:1 (every known-alive fish detected)."
+#| fig-height: 6
+Monthly |>
+  filter(scan_hrs >= 100, season == "Oct–Apr (model window)", known_alive > 0) |>
+  ggplot(aes(x = known_alive, y = unique_fish, colour = FY)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
+  geom_point(size = 1.8) +
+  facet_wrap(~Site, scales = "free") +
+  scale_colour_viridis_c("Fiscal\nyear") +
+  labs(x = "Tagged fish known alive in month", y = "Unique fish contacted in month")
+```
+
+## Data sufficiency for the robust-design model
+
+The model treats each Oct–Apr month (7 per fiscal year) as a primary period with four weekly secondary occasions. A useful month needs scanner effort across most weeks and enough tagged fish alive to yield recaptures. @tbl-fy summarizes each site × fiscal year on these criteria. The model window begins in FY2017; YCB rows for FY2014–FY2016 are included for completeness and are relevant to the Chapman validation work rather than to the joint model.
+
+```{r}
+#| label: tbl-fy
+#| tbl-cap: "Oct–Apr scanning summary by site and fiscal year. 'Months scanned' counts months with any effort (of 7); 'Months ≥ 50% cover' counts months with scanners running on at least half the days; weeks covered counts week-of-month blocks (4 per month, 28 per year) with at least one scan day. Known alive is the range over the seven months; median proportion detected is over months with ≥ 100 scan hours."
+week_of_month <- function(d) pmin((day(d) - 1) %/% 7 + 1, 4)
+WeeksCovered <- EffortDaily |>
+  mutate(month = floor_date(day, "month"), FY = fy_of(day)) |>
+  filter(month(day) %in% c(10:12, 1:4)) |>
+  distinct(Site, FY, month, wk = week_of_month(day)) |>
+  count(Site, FY, name = "weeks_covered")
+UniqueFY <- Contacts |>
+  filter(month(Date) %in% c(10:12, 1:4)) |>
+  mutate(FY = fy_of(Date)) |>
+  group_by(Site, FY) |>
+  summarise(unique_fish_fy = n_distinct(PITIndex), .groups = "drop")
+FYSummary <- Monthly |>
+  filter(season == "Oct–Apr (model window)", FY >= start_fy) |>
+  group_by(Site, FY) |>
+  summarise(
+    months_scanned = sum(scan_hrs > 0),
+    months_half_cover = sum(coverage >= 0.5),
+    scan_hrs_total = round(sum(scan_hrs)),
+    known_alive_range = sprintf("%d–%d", min(known_alive), max(known_alive)),
+    med_prop_detected = round(median(prop_detected[scan_hrs >= 100], na.rm = TRUE), 2),
+    .groups = "drop"
+  ) |>
+  left_join(WeeksCovered, by = c("Site", "FY")) |>
+  left_join(UniqueFY, by = c("Site", "FY")) |>
+  mutate(across(c(weeks_covered, unique_fish_fy), ~replace_na(.x, 0L))) |>
+  select(Site, FY, months_scanned, months_half_cover, weeks_covered, scan_hrs_total, known_alive_range, unique_fish_fy, med_prop_detected)
+FYSummary |>
+  kable(
+    col.names = c("Site", "FY", "Months scanned (of 7)", "Months ≥ 50% cover", "Weeks covered (of 28)", "Scan hours", "Known alive", "Unique fish contacted", "Median prop. detected"),
+    align = "llrrrrcrr"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
+  collapse_rows(columns = 1, valign = "top")
+```
+
+```{r}
+#| label: fig-sufficiency
+#| fig-cap: "Per-month sufficiency screen for the Oct–Apr model window. A month is classed as 'usable' when it has ≥ 50% scan-day coverage and at least 5 unique tagged fish contacted; 'effort only' when scanners ran but fewer than 5 fish were contacted; 'no effort' otherwise."
+#| fig-height: 7
+Monthly |>
+  filter(season == "Oct–Apr (model window)", FY >= start_fy) |>
+  mutate(class = case_when(
+    scan_hrs == 0 ~ "No effort",
+    coverage >= 0.5 & unique_fish >= 5 ~ "Usable",
+    coverage < 0.5 & unique_fish >= 5 ~ "Partial coverage, fish contacted",
+    TRUE ~ "Effort only (< 5 fish)"
+  ) |> factor(levels = c("Usable", "Partial coverage, fish contacted", "Effort only (< 5 fish)", "No effort"))) |>
+  ggplot(aes(x = moy, y = factor(FY), fill = class)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = if_else(unique_fish > 0, as.character(unique_fish), "")), size = 2.2) +
+  facet_wrap(~Site, scales = "free_y") +
+  scale_fill_manual(values = c("Usable" = "#2c7bb6", "Partial coverage, fish contacted" = "#abd9e9", "Effort only (< 5 fish)" = "#fdae61", "No effort" = "grey85"), drop = FALSE) +
+  labs(x = "Month", y = "Fiscal year", fill = NULL, caption = "Tile labels are unique tagged fish contacted in the month.") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")
+```
+
+## Summary
+
+```{r summary-stats}
+overall <- Monthly |>
+  filter(season == "Oct–Apr (model window)", FY >= 2017) |>
+  group_by(Site) |>
+  summarise(
+    n_months = n(),
+    pct_scanned = round(100 * mean(scan_hrs > 0)),
+    pct_half = round(100 * mean(coverage >= 0.5)),
+    pct_usable = round(100 * mean(coverage >= 0.5 & unique_fish >= 5)),
+    max_known = max(known_alive),
+    min_known = min(known_alive),
+    .groups = "drop"
+  )
+overall |>
+  kable(col.names = c("Site", "Oct–Apr months (FY2017+)", "% with any effort", "% with ≥ 50% coverage", "% usable (coverage + ≥ 5 fish)", "Max known alive", "Min known alive")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+Points to weigh when deciding how each site enters the model:
+
+- **Effort gaps** (@fig-effort-heat) are structural — no amount of modeling recovers a month with no scanner. Months with partial coverage are usable because the model conditions detection on weeks available, but they contribute fewer secondary occasions.
+- **Seasonal detection** (@fig-season) is handled by the month-of-season detection effect in the model, provided each month has enough years of data to estimate it. Razorback Sucker are expected to be most detectable during the late-winter spawning period (roughly Jan–Mar); compare this against the Bonytail pattern, where detection was lowest Dec–Feb.
+- **Population size and turnover.** YCB carries a much larger tagged population than any Imperial pond, but it also has step reductions from harvest and transfer events and continuous additions of netting-tagged recruits, so its known-alive line reflects management as much as survival. When known alive falls below roughly 10–20 fish in an Imperial pond, monthly recapture information becomes too sparse to separate survival from detection, and abundance estimates will lean heavily on the hierarchical priors shared with other ponds.
+- **Proportion detected in the most recent year** is upward-biased because the known-alive denominator depends on future contacts; treat the last ~12 months of that panel with caution.
+
+All figures were produced from `data/ReportingData.RData` (`StudyBWEffort`, `StudyBWContacts`, `StudyBWAnalysis`).

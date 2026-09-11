@@ -1,0 +1,7 @@
+Backwater,EventMonth,Species,Stage,HarvestedUntagged,ReturnedUntagged,ReturnedInPool,MortsUntagged,MeanTL,Notes
+Yuma Cove backwater,2016-10,XYTE,J,0,0,TRUE,7,287,"7 untagged YoY morts (genetics taken)"
+Yuma Cove backwater,2017-10,XYTE,A,0,0,TRUE,2,372,"2 morts fin clipped not tagged; stage assumed adult (newly tagged avg 372 mm)"
+Yuma Cove backwater,2019-11,XYTE,J,2782,0,TRUE,95,152,"2782 untagged fish harvested to Lake Mead (avg 152 mm); 95 morts"
+Yuma Cove backwater,2022-11,XYTE,J,0,1000,FALSE,0,NA,"1000 returned untagged; only fish >100 mm were tagged so these assumed below taggable size and NOT in juvenile pool"
+Yuma Cove backwater,2023-11,XYTE,J,0,100,TRUE,0,119,"100 returned untagged; tagged YoY averaged 119 mm; assumed taggable size (in pool)"
+Yuma Cove backwater,2024-10,XYTE,J,0,531,TRUE,0,132,"531 returned untagged; YoY from hoops averaged 132 mm; assumed taggable size (in pool)"

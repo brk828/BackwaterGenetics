@@ -1,0 +1,301 @@
+---
+title: "Yuma Cove Backwater Razorback Sucker — recruit size, density, and juvenile fate"
+subtitle: "Phase 0 groundwork for a three-stage, density-dependent robust-design model"
+author: "Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(mgcv)
+load("../data/ReportingData.RData")
+rd <- new.env(); load("../data/BWRobustDesign_data.RData", envir = rd)
+theme_set(theme_bw(base_size = 12))
+YCB <- "Yuma Cove backwater"
+fy_of <- function(d) year(d) + (month(d) > 9)
+ycb_con <- StudyBWContacts |> filter(LID == 592) |> select(PITIndex, Date)
+last_con <- ycb_con |> group_by(PITIndex) |> summarise(first_con = min(Date), last_con = max(Date), .groups = "drop")
+F1 <- rd$Fish |> filter(pond == 1) |> select(PITIndex, origin, stage0, removed, rem_date, rem_type)
+lw <- rd$LengthWeight |> filter(species == "XYTE")
+wt_g <- function(TL) exp(lw$a + lw$b * log(TL))
+```
+
+## Purpose
+
+The joint robust-design model underestimates adult Razorback Sucker survival at Yuma Cove Backwater (YCB) because one species-level juvenile offset (`dJ`) has to describe both the Imperial Ponds, where netting-tagged juveniles are re-seen at roughly 50–65 %, and YCB, where hundreds of small recruits tagged each fall are almost never seen again. Before restructuring the model around three size classes and density-dependent growth and survival, this document checks whether the empirical patterns support that structure and what size threshold separates "small" from "large" juveniles.
+
+Questions:
+
+1. How does recruit size at the fall netting vary among years, and does it track recruit abundance?
+2. How does the probability that a netting-tagged fish is ever seen again depend on its size at tagging?
+3. When do small tagged fish disappear — immediately (tagging effect), over the first winter, or gradually?
+4. Does small-fish fate vary with recruit abundance or adult biomass among cohorts?
+5. Do the Imperial Ponds sit on the same curves?
+
+"Recruit" below means an untagged Razorback Sucker first handled at an Oct–Dec netting event at YCB (`FirstRecord == "yes"`, `event == "capture"`). Most are age-0 fish hatched the preceding spring, but in some years the pool includes untagged older fish, visible as an upper mode in the length distributions.
+
+## Recruit size at the fall netting
+
+```{r recruits}
+rec <- StudyBWNFWG |>
+  filter(location == YCB, species == "XYTE", FirstRecord == "yes", event == "capture", !is.na(total_length),
+         month(collection_date) %in% 10:12) |>
+  mutate(FY = fy_of(collection_date), TL = total_length)
+rec_fy <- rec |>
+  group_by(FY) |>
+  summarise(n_rec = n(), med_TL = median(TL), q10 = quantile(TL, .1), q90 = quantile(TL, .9),
+            p250 = mean(TL >= 250), p300 = mean(TL >= 300), p350 = mean(TL >= 350), .groups = "drop")
+```
+
+```{r}
+#| label: fig-rec-tl
+#| fig-cap: "Total length of untagged Razorback Sucker first handled at Oct–Dec netting events at YCB, by fiscal year. Point labels give the number of fish. Dashed lines at 250, 300, and 350 mm are candidate stage thresholds."
+#| fig-height: 5
+ggplot(rec, aes(x = factor(FY), y = TL)) +
+  geom_hline(yintercept = c(250, 300, 350), linetype = "dashed", colour = "grey60") +
+  geom_violin(fill = "grey90", scale = "width") +
+  geom_jitter(width = 0.15, size = 0.5, alpha = 0.4) +
+  geom_text(data = rec_fy, aes(y = 620, label = n_rec), size = 3) +
+  labs(x = "Fiscal year of netting", y = "Total length at first capture (mm)")
+```
+
+```{r}
+#| label: tbl-rec
+#| tbl-cap: "Recruit size by netting year at YCB. p250/p300/p350 are the fraction of first-capture fish at or above each threshold."
+rec_fy |>
+  mutate(across(c(p250, p300, p350), ~round(.x, 2)), across(c(med_TL, q10, q90), round)) |>
+  kable(col.names = c("FY", "n", "Median TL", "10th pct", "90th pct", "≥ 250", "≥ 300", "≥ 350")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r}
+#| label: fig-size-vs-n
+#| fig-cap: "Median recruit total length versus number of recruits handled, by netting year. Years with fewer than ~130 recruits produced fish near or above 300 mm by October; years with 270–500 recruits produced fish of 120–260 mm."
+#| fig-height: 4.5
+ggplot(rec_fy, aes(x = n_rec, y = med_TL, label = FY)) +
+  geom_point(size = 2.5) +
+  ggrepel::geom_text_repel(size = 3) +
+  labs(x = "Recruits handled at fall netting", y = "Median TL (mm)")
+```
+
+Two caveats. First, years with an upper mode (FY2018, FY2020, FY2021, FY2024–FY2026) include untagged older fish, so the median overstates age-0 size in those years; the 10th percentile is a cleaner index of the age-0 mode. Second, the number handled reflects netting effort as well as abundance, though effort at YCB has been broadly similar across years.
+
+## Re-sighting probability by size at tagging
+
+A netting-tagged fish counts as re-seen if it has a YCB scanner contact at least 365 days after tagging. Fish harvested or transferred within that year are excluded, as are fish tagged after mid-2025 (not yet a full year at large).
+
+```{r resight}
+resight <- rec |>
+  filter(disposition == "released") |>
+  select(PITIndex, FY, TL, tag_date = collection_date) |>
+  inner_join(F1, by = "PITIndex") |>
+  filter(!removed | rem_date >= tag_date + 365, tag_date <= as.Date("2025-07-01")) |>
+  left_join(last_con, by = "PITIndex") |>
+  mutate(reseen = !is.na(last_con) & last_con >= tag_date + 365,
+         ever = !is.na(last_con), dal_last = as.numeric(last_con - tag_date))
+bins <- c(0, 150, 200, 250, 300, 350, 400, 500, 1000)
+resight_bin <- resight |>
+  mutate(bin = cut(TL, bins, right = FALSE)) |>
+  group_by(bin) |>
+  summarise(n = n(), k = sum(reseen), lo = binom.test(k, n)$conf.int[1], hi = binom.test(k, n)$conf.int[2], reseen = k / n, .groups = "drop")
+gam_fit <- gam(reseen ~ s(TL, k = 8), family = binomial, data = resight)
+gam_pred <- tibble(TL = seq(100, 560, 5)) |> mutate(p = predict(gam_fit, cur_data(), type = "response"))
+```
+
+```{r}
+#| label: fig-resight-tl
+#| fig-cap: "Probability that a netting-tagged Razorback Sucker was contacted at YCB ≥ 365 days after tagging, by total length at tagging. Points are 50-mm bins with exact binomial 95% intervals (bin sample size labelled); the curve is a binomial GAM. Dashed lines at 250, 300, and 350 mm."
+#| fig-height: 4.5
+bin_mid <- head(bins, -1) + diff(bins) / 2
+bin_mid[length(bin_mid)] <- 550
+resight_bin$TLmid <- bin_mid
+ggplot() +
+  geom_vline(xintercept = c(250, 300, 350), linetype = "dashed", colour = "grey60") +
+  geom_line(data = gam_pred, aes(TL, p), colour = "steelblue") +
+  geom_pointrange(data = resight_bin, aes(TLmid, reseen, ymin = lo, ymax = hi)) +
+  geom_text(data = resight_bin, aes(TLmid, hi + 0.05, label = n), size = 3) +
+  coord_cartesian(xlim = c(100, 580)) +
+  labs(x = "Total length at tagging (mm)", y = "P(contacted ≥ 1 year later)")
+```
+
+```{r}
+#| label: tbl-resight-fy
+#| tbl-cap: "Re-sighting ≥ 1 year after tagging by cohort and size class at tagging (n in parentheses). Fish tagged in FY2021 and FY2022 fell in the YCB scanner gap and are shown for completeness only."
+resight |>
+  mutate(cls = cut(TL, c(0, 250, 350, 1000), labels = c("< 250", "250–349", "≥ 350"), right = FALSE)) |>
+  group_by(FY, cls) |>
+  summarise(v = sprintf("%.2f (%d)", mean(reseen), n()), .groups = "drop") |>
+  pivot_wider(names_from = cls, values_from = v, values_fill = "—") |>
+  kable() |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+The curve is flat at 1–4 % from 100 mm to 300 mm, rises to ~10 % at 300–349 mm, and jumps to 57–70 % at and above 350 mm. That is not the gradual size-survival gradient a growth-limited threshold would produce; below ~330 mm, size at tagging barely matters. It also means the natural break in the data is at the existing adult threshold (350 mm), not at 250 or 300 mm. If a three-stage model is to help, the S/L split has to be justified by something other than this pooled curve — most plausibly by cohort-level differences (next section) and by the growth mechanism (recruits ≥ 300 mm in low-density years are within one growing season of 350 mm).
+
+## When do small tagged fish disappear?
+
+```{r persist}
+small <- resight |> filter(TL < 300)
+persist_fy <- small |>
+  group_by(FY) |>
+  summarise(n = n(), ever = round(mean(ever), 2), med_dal = median(dal_last, na.rm = TRUE),
+            gt90 = round(mean(dal_last > 90, na.rm = TRUE), 2), gt180 = round(mean(dal_last > 180, na.rm = TRUE), 2),
+            gt365 = round(mean(dal_last > 365, na.rm = TRUE), 2), .groups = "drop")
+scan_after <- small |>
+  distinct(FY, tag_date) |>
+  group_by(FY) |>
+  summarise(tag_date = min(tag_date), .groups = "drop") |>
+  rowwise() |>
+  mutate(scan_hrs_90d = {
+    e <- StudyBWEffort |> filter(Location == YCB, as.Date(Retrieve) >= tag_date, as.Date(Deploy) <= tag_date + 90)
+    round(sum(e$ScanTimeHrs))
+  }) |>
+  ungroup()
+```
+
+```{r}
+#| label: fig-persist
+#| fig-cap: "Fraction of small (< 300 mm) netting-tagged fish still being contacted at YCB, by days since tagging, for each cohort. Each curve is the proportion of the cohort whose last YCB contact is at or after that day. Cohorts tagged into the FY2021–FY2022 scanner gap are omitted."
+#| fig-height: 4.5
+grid <- expand_grid(FY = unique(small$FY), d = seq(0, 720, 10))
+curves <- grid |>
+  left_join(small |> select(FY, dal_last, ever), by = "FY", relationship = "many-to-many") |>
+  group_by(FY, d) |>
+  summarise(p = mean(ever & dal_last >= d), n = n(), .groups = "drop") |>
+  filter(!FY %in% c(2021, 2022), n >= 20)
+ggplot(curves, aes(d, p, colour = factor(FY))) +
+  geom_step(linewidth = 0.8) +
+  geom_vline(xintercept = c(90, 180), linetype = "dotted", colour = "grey50") +
+  scale_colour_viridis_d("Cohort (FY)") +
+  labs(x = "Days since tagging", y = "Fraction still being contacted")
+```
+
+```{r}
+#| label: tbl-persist
+#| tbl-cap: "Small (< 300 mm) netting-tagged fish by cohort: fraction ever contacted by a scanner, median days from tagging to last contact, fraction with a contact beyond 90/180/365 days, and scanner hours logged at YCB in the 90 days after tagging."
+persist_fy |>
+  left_join(scan_after |> select(FY, scan_hrs_90d), by = "FY") |>
+  kable(col.names = c("FY", "n", "Ever scanned", "Median days to last contact", "> 90 d", "> 180 d", "> 365 d", "Scan hours, 90 d post-tagging")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+In the large cohorts (FY2019, FY2023–FY2025) 83–96 % of small fish were contacted after release, so tags were functioning and the fish were alive and moving. Contacts then ceased for nearly all of them within 60–120 days, i.e. between December and February. This is not immediate tagging mortality (fish persist for 2–3 months) and not a detection artefact (scanners logged 2,000–5,600 hours over the same period). It is consistent with overwinter loss — mortality, or possibly tag loss, though shedding a month or more after tagging at this scale would be unusual.
+
+The small FY2018 cohort (34 fish under 300 mm out of 95 recruits) behaved completely differently: 81 % were still being contacted a year later. The FY2017 cohort (78 small fish of 126 recruits) was lost — this is the documented 2018 recruit die-off — but only 26 % were ever scanned despite ample effort, which suggests either a different scanner configuration in FY2017 or that the loss began earlier than in later cohorts.
+
+## Cohort-level covariates
+
+```{r cohort}
+tl_at <- function(cut) StudyBWNFWG |>
+  filter(location == YCB, !is.na(total_length), collection_date <= cut) |>
+  group_by(PITIndex) |> slice_max(collection_date, n = 1, with_ties = FALSE) |> ungroup() |>
+  select(PITIndex, TL_last = total_length)
+biomass <- tibble(FY = 2014:2026, d = as.Date(paste0(FY - 1, "-10-01"))) |>
+  rowwise() |>
+  mutate(alive = list(KnownSurvivalYuma |> filter(Date == d) |> left_join(tl_at(d), by = "PITIndex") |> mutate(TL2 = coalesce(TL_last, total_length))),
+         n_alive = nrow(alive), n_adult = sum(alive$TL2 >= 350, na.rm = TRUE),
+         kg_adult = sum(wt_g(alive$TL2[!is.na(alive$TL2) & alive$TL2 >= 350])) / 1000,
+         kg_all = sum(wt_g(alive$TL2[!is.na(alive$TL2)])) / 1000) |>
+  ungroup() |> select(-alive, -d)
+cohort <- biomass |>
+  left_join(rec_fy |> select(FY, n_rec, med_TL, q10, p300), by = "FY") |>
+  left_join(persist_fy |> select(FY, n_small = n, small_gt365 = gt365), by = "FY") |>
+  filter(FY >= 2014, FY <= 2025, !is.na(n_rec))
+```
+
+```{r}
+#| label: tbl-cohort
+#| tbl-cap: "Cohort table for YCB. Known-alive counts and biomass are at 1 October of the fiscal year (tagged fish only; a lower bound on the true standing stock). Recruit columns describe untagged fish first handled that Oct–Dec; small-fish survival is the fraction of < 300 mm tagged recruits contacted > 365 days later. FY2021–FY2022 survival is unobservable (scanner gap)."
+cohort |>
+  mutate(across(c(kg_adult, kg_all), ~round(.x)), across(c(med_TL, q10), round), p300 = round(p300, 2)) |>
+  select(FY, n_alive, n_adult, kg_adult, n_rec, med_TL, q10, p300, n_small, small_gt365) |>
+  kable(col.names = c("FY", "Known alive (tagged)", "of which ≥ 350", "Adult biomass (kg)", "Recruits handled", "Median TL", "10th pct TL", "≥ 300 mm", "Small tagged", "Small survival > 1 yr")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r}
+#| label: fig-cohort
+#| fig-cap: "Cohort-level relationships at YCB. Left: fraction of recruits ≥ 300 mm at netting versus recruits handled. Right: small-fish survival to one year versus recruits handled; point colour is tagged adult biomass at the start of the fiscal year. FY2021 and FY2022 (scanner gap) are excluded from the right panel."
+#| fig-height: 4.5
+p1 <- ggplot(cohort, aes(n_rec, p300, label = FY)) + geom_point(size = 2.5) + ggrepel::geom_text_repel(size = 3) +
+  labs(x = "Recruits handled", y = "Fraction of recruits ≥ 300 mm")
+p2 <- cohort |> filter(!FY %in% c(2021, 2022), !is.na(small_gt365)) |>
+  ggplot(aes(n_rec, small_gt365, colour = kg_adult, label = FY)) + geom_point(size = 3) + ggrepel::geom_text_repel(size = 3, colour = "black") +
+  scale_colour_viridis_c("Adult\nbiomass (kg)") +
+  labs(x = "Recruits handled", y = "Small-fish survival to 1 yr")
+patchwork::wrap_plots(p1, p2)
+```
+
+Recruit size falls steeply with recruit number, which is the density-dependent growth signal. Small-fish survival is essentially binary across the observable cohorts: high in the one small cohort (FY2018) and near zero in every cohort of 125 or more recruits. Tagged adult biomass varies only between about 190 and 270 kg over FY2017–FY2025 and does not separate the surviving cohort from the others, so with the data in hand recruit density, not adult biomass, is the covariate with leverage. That is a thin basis for a fitted slope — effectively one surviving cohort against four or five lost ones — and the model should treat the density effect on survival as a hypothesis to be estimated with a regularizing prior rather than a well-determined quantity.
+
+## Growth increments
+
+```{r growth}
+gr <- StudyBWGrowth |> filter(location == YCB, species == "XYTE", YAL < 1.6)
+gr |>
+  mutate(sizebin = cut(FirstTL, c(0, 250, 350, 450, 1000), right = FALSE)) |>
+  count(FYtag = fy_of(FirstDate), sizebin) |>
+  pivot_wider(names_from = sizebin, values_from = n, values_fill = 0) |>
+  kable(caption = "Fish with a physical recapture 1–1.6 years after tagging at YCB, by tagging year and size at tagging. Juvenile recaptures are too few to estimate density-dependent growth from increments.") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+Physical recaptures of juveniles a year after tagging are almost nonexistent (the fish are gone), so within-year maturation rates cannot be made density dependent from growth data. The recruit size split at the fall netting is the only usable growth observation, and it should be modeled directly.
+
+## Imperial Ponds preview
+
+```{r ip}
+ip <- tibble(location = c("IPCA (Pond 1)", "IPCA (Pond 3)", "IPCA (Pond 4)"), LID = c(1043L, 1045L, 1046L), Site = c("Pond 1", "Pond 3", "Pond 4"))
+ip_rec <- StudyBWNFWG |>
+  filter(location %in% ip$location, species == "XYTE", FirstRecord == "yes", event == "capture", !is.na(total_length), disposition == "released") |>
+  inner_join(ip, by = "location") |>
+  mutate(FY = fy_of(collection_date), TL = total_length, tag_date = collection_date)
+ip_last <- StudyBWContacts |> filter(LID %in% ip$LID) |> group_by(LID, PITIndex) |> summarise(last_con = max(Date), .groups = "drop")
+ip_resight <- ip_rec |>
+  left_join(rd$Fish |> select(PITIndex, location, removed, rem_date), by = c("PITIndex", "location")) |>
+  filter(is.na(removed) | !removed | rem_date >= tag_date + 365, tag_date <= as.Date("2025-07-01")) |>
+  left_join(ip_last, by = c("LID", "PITIndex")) |>
+  mutate(reseen = !is.na(last_con) & last_con >= tag_date + 365,
+         cls = cut(TL, c(0, 250, 350, 1000), labels = c("< 250", "250–349", "≥ 350"), right = FALSE))
+```
+
+```{r}
+#| label: tbl-ip
+#| tbl-cap: "Imperial Ponds Razorback Sucker: untagged fish first handled at netting (any month), by pond and fiscal year — count, median TL, and re-sighting ≥ 1 year later by size class (n in parentheses)."
+ip_resight |>
+  group_by(Site, FY) |>
+  summarise(n = n(), med_TL = round(median(TL)),
+            small = sprintf("%.2f (%d)", mean(reseen[cls == "< 250"]), sum(cls == "< 250")),
+            mid = sprintf("%.2f (%d)", mean(reseen[cls == "250–349"]), sum(cls == "250–349")),
+            adult = sprintf("%.2f (%d)", mean(reseen[cls == "≥ 350"]), sum(cls == "≥ 350")), .groups = "drop") |>
+  mutate(across(c(small, mid, adult), ~str_replace(.x, "NaN \\(0\\)", "—"))) |>
+  filter(n >= 5) |>
+  kable(col.names = c("Pond", "FY", "n", "Median TL", "< 250", "250–349", "≥ 350")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
+  collapse_rows(columns = 1, valign = "top")
+```
+
+The Imperial Ponds handle far fewer untagged recruits per year than YCB and, where sample sizes allow, small tagged fish there are re-seen at rates an order of magnitude above YCB's large cohorts. Whether that places the IP ponds on the low-density end of a single YCB-derived curve, or reflects a categorical difference between sites, is exactly what the Phase 4 extension will test — it needs pond surface areas to put recruit numbers on a per-acre scale.
+
+## Conclusions for the model design
+
+1. **Density-dependent first-season growth is well supported.** Recruit size at the fall netting drops from ~300 mm in years with < 130 recruits to 120–180 mm in years with ~300–500. Model the fraction of recruits at or above the S/L threshold as a function of recruit density (`pL[y]`), with the observed size split at netting as its likelihood.
+2. **The S/L threshold is not visible in the pooled survival curve.** Re-sighting is flat at 1–4 % up to 300 mm and only rises at 350 mm. A threshold of **300 mm** is the defensible choice: it is where the curve begins to rise, it separates the age-0 modes of low- and high-density years, and a 300-mm recruit reaches the 350-mm adult class within its second season. Using 250 mm would put many high-density-year recruits in the L class with no evidence they fare better than S fish.
+3. **Small-fish loss is an overwinter event in dense cohorts**, occurring 2–4 months after tagging, not at tagging. In the model this argues for letting the density effect act on S-stage survival through the first Oct–Apr season (which the existing 6-month post-release window largely spans) rather than as a constant offset for the whole juvenile stage.
+4. **The survival covariate has little contrast.** Adult tagged biomass is nearly constant across cohorts; recruit density varies but the outcome is nearly binary and rests on one surviving cohort. Fit `cB` (or a recruit-density analogue) with a regularizing prior, report it with its interval, and expect it to be poorly determined until the IP ponds contribute low-density contrast.
+5. **Growth increments cannot inform maturation rates**; keep `psi_SL` and `psi_LA` density independent.
+6. **Open data need:** surface areas for YCB and IP Ponds 1, 3, 4 so that densities are comparable across sites.
