@@ -11,7 +11,7 @@
 
 
 
-<title>GIEL_ClassicCJS_RobustDesign_Annual_Summary</title>
+<title>GIEL_VBGF_AgeLength_Summary</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -352,744 +352,544 @@ display: none;
 </div>
 
 
-<div id="bonytail-giel-classic-annualized-cjs-model-ip5-only-robust-design-motivated" class="section level1">
-<h1>Bonytail (GIEL) Classic Annualized CJS Model — IP5-Only,
-Robust-Design-Motivated</h1>
-<p><strong>Purpose:</strong> an IP5-only classic (frequentist, MLE) CJS
-cross-check on the joint hierarchical Bayesian robust-design model
-(<code>data/BWRobustDesign_MCMC_giel.RData</code>), built specifically
-to target the FY2020 IP5 die-off and structured, where possible, like
-the Bayesian model’s own survival/gap logic. Built and fit 2026-09-11
-with the <code>marked</code> R package. Code:
-<code>model/GIEL_ClassicCJS_RobustDesign_Annual.R</code>; output:
-<code>data/GIEL_ClassicCJS_RobustDesign_Annual.RData</code>,
-<code>model/GIEL_ClassicCJS_RobustDesign_Annual_bootGOF.png</code>.</p>
-<div id="why-this-script-exists-collapsed-from-a-failed-monthly-attempt" class="section level2">
-<h2>0. Why this script exists (collapsed from a failed monthly
-attempt)</h2>
-<p>An earlier script, <code>model/GIEL_ClassicCJS_RobustDesign.R</code>
-(not separately documented), tried to reproduce the Bayesian joint
-model’s <em>exact</em> monthly robust-design time structure for IP5
-stocked fish: 70 monthly occasions, 60 of 69 within-season transitions
-fixed to Phi = 1 via <code>marked</code>’s <code>fix = 1</code>
-mechanism, with all real survival information concentrated into 9 annual
-Apr→Oct gaps. <code>crm()</code> reproducibly hard-crashed
-(non-catchable, even under <code>callr</code> process isolation) on a
-large fraction of bootstrap-simulated capture histories under that
-design — traced to the within-season closure assumption producing
-degenerate/boundary outcomes in the small (~18–20 fish) “young” stratum.
-<strong>Fix:</strong> collapse to 10 ANNUAL occasions (FY2017–FY2026,
-the 9 between-year intervals only) with no within-season transitions and
-no <code>fix</code> mechanism at all — every one of the 9 transitions is
-a real, freely-estimated annual survival parameter. Each bootstrap
-replicate’s refit is additionally isolated in its own <code>callr</code>
-subprocess (protects the job even if <code>crm()</code> crashes
-again).</p>
+<div id="bonytail-age-based-von-bertalanffy-growth-model" class="section level1">
+<h1>Bonytail Age-Based von Bertalanffy Growth Model</h1>
+<p><strong>Script:</strong> <code>model/GIEL_VBGF_AgeLength.R</code> |
+<strong>Data:</strong> <code>data/GIEL_VBGF_AgeLength.RData</code>
+<strong>Date:</strong> 2026-09-14 (BK request); revised twice same day:
+1. Anchor <code>L0</code> on a literature hatch-length value (see “L0
+anchoring” section below). 2. <strong>Shared-K, release-anchored
+revision</strong> (see that section below) – the current version. This
+drops the origin-specific growth rate entirely and anchors stocked
+fish’s growth at their own release size/date rather than an assumed
+hatch date, based on a direct empirical test showing no credible
+growth-rate difference between stocked and wild-recruit bonytail once in
+the pond.</p>
+<p>Two earlier fits are archived for comparison: the original
+<code>t0</code>-formulation fit
+(<code>data/GIEL_VBGF_AgeLength_t0.RData</code>) and the
+<code>L0</code>-anchored, hatch-age, origin-differentiated fit
+(<code>data/GIEL_VBGF_AgeLength_originDiff.RData</code>).</p>
+<div id="motivation" class="section level2">
+<h2>Motivation</h2>
+<p>The existing bonytail growth model
+(<code>model/GIEL_GrowthSeasonThreshold.R</code>) fits a Fabens
+growth-<em>increment</em> model to opportunistic recapture pairs, with
+no absolute age information. That model’s <code>Linf</code> (417.7 mm)
+sits below the largest observed length in the data (462 mm) – an
+unresolved identifiability failure traced to having almost no recaptured
+fish near the true size asymptote (see that script’s header and
+<code>GIEL_GrowthSeasonThreshold_Summary.md</code> §0b). BK proposed two
+previously-unused age data sources for bonytail that could fix this by
+anchoring the growth curve with real ages instead of only paired size
+differences.</p>
 </div>
-<div id="design" class="section level2">
-<h2>1. Design</h2>
-<ul>
-<li><strong>Population:</strong> IP5 <strong>stocked-only</strong> GIEL,
-600 fish, two cohorts — FY2017 (280 tagged as “adult”-size, 20 as
-“young”) and FY2022 (300, all adult-size; <code>pond_check</code> in the
-saved <code>.RData</code> shows all 600 have a recorded tagging length,
-unlike IP2’s 300 length-less stocked fish). No netting-tagged (“wild”)
-fish and no other pond are included — this is a narrower population than
-<code>GIEL_ClassicCJS.R</code>/<code>GIEL_ClassicCJS_PondGrouped.R</code>,
-chosen to focus specifically on IP5’s FY2020 die-off.</li>
-<li><strong>Occasions:</strong> annual, FY2017–FY2026 (10 occasions, 9
-survival intervals). Detection at an occasion = any PIT contact anywhere
-in that FY’s Oct–Apr window (May–Sep contacts ignored, same convention
-as the pooled/pond-grouped classic CJS models). 0 contact-occasions were
-suppressed as pre-entry (<code>n_suppressed = 0</code>).</li>
-<li><strong>Size class (“young”/“adult”):</strong> identical logic to
-the other classic CJS scripts — a fish tagged &lt;250 mm TL is “young”
-for exactly the one annual interval immediately following its own
-tagging occasion, “adult” for every interval after that (and
-immediately, if tagged ≥250 mm). Only 3 of 126 Phi design rows are
-“young” (the FY2017 cohort’s 20 young-tagged fish collapse to 3 unique
-covariate combinations after <code>marked</code> deduplicates identical
-histories).</li>
-<li><strong>Phi covariates tested (in place of the pooled models’
-<code>time</code>/<code>origin</code>, since origin is constant here —
-all fish are stocked):</strong>
-<ul>
-<li><code>gap</code> — a <strong>9-level year factor</strong>
-(FY2017…FY2025, one level per interval-start year); despite the name,
-this is full annual time-variation, not a two-level dummy.</li>
-<li><code>dieoff</code> — a 2-level factor (<code>event</code> = the
-FY2020 interval only, <code>normal</code> = every other interval), a
-more parsimonious representation of “one die-off year, otherwise
-pooled.”</li>
-<li><code>const</code> — sizeclass only, no time variation.</li>
-</ul></li>
-<li><strong>p covariates tested:</strong> <code>time</code> (one
-estimate per year) or constant (<code>.</code>).</li>
-<li><strong>Model set:</strong> 3 Phi structures × 2 p structures = 6
-models (a much smaller set than the pooled/pond-grouped scripts since
-origin is dropped and pond identity is fixed at IP5).</li>
-</ul>
+<div id="age-data-sources" class="section level2">
+<h2>Age data sources</h2>
+<ol style="list-style-type: decimal">
+<li><p><strong>Known stocking-cohort year class.</strong>
+<code>StudyBWNFWG$year_class</code> is populated for two GIEL stockings:
+2017-03-21 (899 records, all 3 ponds, year class 2012) and 2023-04-12
+(300 records, Pond 2 only, year class 2018). Both cohorts were already
+<strong>~5.2 years old at release</strong> (long captive rearing before
+stocking is typical for bonytail hatchery production), at TL 234-299 mm
+for the 2012 cohort. A third stocking (2022-03-09, 300 fish, Pond 5) has
+<strong>no recorded year class</strong> – flagged for database
+follow-up, not fixed here. <code>year_class</code> is already propagated
+in the source data to every later NFWG record (recaptures) for these
+PITs, so every measured record of a known-cohort fish is a valid
+age-length point, not just the stocking record itself.</p></li>
+<li><p><strong>Assumed young-of-year (YOY) fall recruits.</strong>
+Untagged fish first captured Oct-Dec with no <code>year_class</code>
+anywhere in their record history show real bimodal size distributions in
+several fiscal years. A 2-component Gaussian mixture
+(<code>mclust::Mclust</code>, <code>G = 1:2</code> selected by BIC) was
+fit per FY on log(TL); where <code>G = 2</code> was preferred, fish
+classified to the lower-mean cluster were assigned
+<code>year_class</code> = calendar year of capture (assumed spring birth
+that year).</p>
+<table>
+<colgroup>
+<col width="20%" />
+<col width="20%" />
+<col width="20%" />
+<col width="20%" />
+<col width="20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>FY</th>
+<th>n candidates</th>
+<th>Decision</th>
+<th>n assigned YOY</th>
+<th>Mean classification uncertainty</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>2018</td>
+<td>9</td>
+<td>too few fish, excluded</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr class="even">
+<td>2019</td>
+<td>101</td>
+<td>included (marginal)</td>
+<td>70</td>
+<td>0.077</td>
+</tr>
+<tr class="odd">
+<td>2020</td>
+<td>334</td>
+<td>included</td>
+<td>79</td>
+<td>0.085</td>
+</tr>
+<tr class="even">
+<td>2021</td>
+<td>0</td>
+<td>no fall captures (die-off aftermath)</td>
+<td>–</td>
+<td>–</td>
+</tr>
+<tr class="odd">
+<td>2022</td>
+<td>54</td>
+<td>included</td>
+<td>27</td>
+<td>0.056</td>
+</tr>
+<tr class="even">
+<td>2023</td>
+<td>94</td>
+<td>included</td>
+<td>16</td>
+<td>0.011</td>
+</tr>
+<tr class="odd">
+<td>2024</td>
+<td>356</td>
+<td>included</td>
+<td>305</td>
+<td>0.0004</td>
+</tr>
+</tbody>
+</table>
+<p>FY2019 has a narrower gap between cluster edges than the other years
+(low-cluster max 228 mm vs high-cluster min 233 mm) and should be read
+with slightly less confidence; all other included years have low
+classification uncertainty.</p></li>
+</ol>
 </div>
-<div id="model-selection" class="section level2">
-<h2>2. Model selection</h2>
+<div id="combined-dataset" class="section level2">
+<h2>Combined dataset</h2>
+<p>The two sources were merged into one year-class map (no PIT overlap
+by construction, 1,199 known + 497 assumed = 1,696 fish) and used to
+compute age at <strong>every</strong> NFWG record for those fish:
+<code>age_years = (collection_date - April 1 of year_class) / 365.25</code>.
+April 1 is a nominal spawning-date assumption, chosen for consistency
+with this project’s existing Apr-Sep “growing season” boundary
+convention used elsewhere (joint robust-design / YCB3S models) – it is
+not a literature-sourced bonytail spawning date.</p>
+<p>Result: <strong>1,601 age-length rows</strong> across <strong>1,476
+distinct fish</strong> (1,365 fish contribute one row, 111 contribute
+2-3 repeat measurements, treated as independent rows – the same
+simplification used in the increment model).</p>
+<table>
+<thead>
+<tr class="header">
+<th>Source</th>
+<th>n rows</th>
+<th>n fish</th>
+<th>Age range (yr)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Assumed YOY fall capture</td>
+<td>525</td>
+<td>497</td>
+<td>0.66 - 3.94</td>
+</tr>
+<tr class="even">
+<td>Known stocking cohort</td>
+<td>1,076</td>
+<td>979</td>
+<td>4.97 - 10.7</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Important structural caveat:</strong> the two age sources
+occupy almost entirely disjoint age windows (max recruit age 3.94 yr vs
+min known-cohort age 4.97 yr) – see the model results below for why this
+matters.</p>
+</div>
+<div id="l0-anchoring-revision-2026-09-14" class="section level2">
+<h2>L0 anchoring (revision, 2026-09-14)</h2>
+<p>The initial draft of this model used a standard <code>t0</code>
+parameterization because it assumed no literature-sourced bonytail
+hatch-length value existed to anchor <code>L0</code> directly (unlike
+the gray triggerfish study;
+<code>documents/Chamberlin2025_GrayTriggerfishVBGM_Summary.md</code>).
+BK pointed out this was incorrect: Hamman (1982) reports a mean bonytail
+hatch length of <strong>6.8 mm TL</strong> (stated range 6.5-7.5 mm)
+–</p>
+<blockquote>
+<p>Hamman, Roger L. “Induced Spawning and Culture of Bonytail Chub.”
+<em>The Progressive Fish-Culturist</em>, vol. 44, no. 4, 1982,
+pp. 201-203. <a href="doi:10.1577/1548-8659(1982)44%5B201:ISACOB%5D2.0.CO;2" class="uri">doi:10.1577/1548-8659(1982)44[201:ISACOB]2.0.CO;2</a>.</p>
+</blockquote>
+<p>The model below was revised to use the standard
+<code>L0</code>/size-at-hatch VBGF form, with <code>L0</code> given an
+informative prior centered on this value (<code>Normal(6.8, 0.25)</code>
+mm; the SD is chosen so the stated 6.5-7.5 mm range spans roughly a 95%
+interval), replacing the earlier essentially-uninformed
+<code>t0 ~ Normal(0, 1)</code> prior. All results in this document are
+from the revised, <code>L0</code>-anchored fit; the superseded
+<code>t0</code> results are noted briefly for comparison where relevant.
+The archived <code>t0</code> fit lives in
+<code>data/GIEL_VBGF_AgeLength_t0.RData</code>.</p>
+</div>
+<div id="l0-anchored-origin-differentiated-results-superseded" class="section level2">
+<h2>L0-anchored, origin-differentiated results (superseded)</h2>
+<p>With the <code>L0</code>/hatch-anchor form above (age since assumed
+hatch date for every fish, origin- specific <code>logK</code>), WAIC
+clearly favored the full (origin + pondyear) model over pondyear-only,
+origin-only, and fully pooled (14,561.0 vs 14,715.9 / 15,382.7 /
+16,095.6 – a large, clean separation). The final fit (barker-sampler
+block, 3 chains, 100k iter/30k burn-in/thin 10, R-hat &lt;= 1.06) gave
+<code>Linf</code> = 486.2 mm (95% CI 463.5-509.4),
+<code>logK[StockedCohort]</code> implying K = 0.221/yr (0.178-0.260),
+<code>logK[AssumedRecruit]</code> implying K = 0.540/yr (0.443-0.622),
+<code>L0</code> = 6.79 mm (posterior ~ prior, as expected), residual
+sigma = 22.7 mm. This was a substantial change from the earlier
+<code>t0</code> version (<code>Linf</code> 703 mm, <code>t0</code> =
+-0.69 yr) because anchoring the age-0 intercept at a real value requires
+faster early growth to reach observed sizes over the 0.66-10.7 yr age
+range, pulling <code>Linf</code> down – see the archived
+<code>data/GIEL_VBGF_AgeLength_originDiff.RData</code> and prior git
+history of this file for full detail on that comparison.</p>
+<p><strong>This origin-differentiated result was itself superseded the
+same day</strong> by the shared-K, release-anchored revision below,
+after BK raised a structural concern with it (see next section).</p>
+</div>
+<div id="shared-k-release-anchored-revision-current" class="section level2">
+<h2>Shared-K, release-anchored revision (current)</h2>
+<div id="motivation-hatchery-growth-vs.-pond-growth-are-conflated-in-the-hatch-anchored-model" class="section level3">
+<h3>Motivation: hatchery growth vs. pond growth are conflated in the
+hatch-anchored model</h3>
+<p>The L0-anchored fit above found a large, “significant” origin effect:
+stocked-cohort fish appeared to grow at less than half the rate of wild
+recruits (K = 0.221 vs 0.540/yr). BK raised a structural concern:
+bonytail stocking cohorts spend <strong>~5.2 years in captive/hatchery
+rearing before release</strong>, and hatchery growth conditions are not
+representative of pond conditions. If stocked and wild fish actually
+grow at the <strong>same rate once both are in the pond</strong>, then
+modeling stocked-fish growth as one continuous curve from an assumed
+hatch date would blend the (different, slower) hatchery-phase growth
+with pond-phase growth, producing a spurious “origin effect” that is
+really a hatchery-vs-pond artifact – not a true difference in how
+bonytail grow once released.</p>
+</div>
+<div id="direct-empirical-test-natural-experiment" class="section level3">
+<h3>Direct empirical test (natural experiment)</h3>
+<p>Almost every pond-year cell in the companion growth-increment dataset
+(<code>GIEL_GrowthSeasonThreshold.R</code>’s <code>gs_fit_data</code>)
+is single-origin (either all newly-stocked or all previously-established
+fish), so origin and pond-year/cohort are almost completely confounded
+in general. <strong>Exactly one cell has both:</strong> IP5 (Pond 5),
+2022-23, where the 2022 stocking cohort (all released at TL = 250 mm,
+recaptured Mar-Dec 2022) overlaps in size with 36 previously-established
+fish measured Dec 2022 (TL1 210-376 mm) and recaptured through Nov 2023.
+Restricting both groups to one-growing-season (182-day) recapture pairs
+and regressing increment on <code>TL1 + Origin</code> (n = 143):</p>
+<table>
+<thead>
+<tr class="header">
+<th>Term</th>
+<th>Estimate</th>
+<th>SE</th>
+<th>p</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>TL1</td>
+<td>-0.526 mm/mm</td>
+<td>0.134</td>
+<td>&lt; 0.001</td>
+</tr>
+<tr class="even">
+<td>Origin (Stocking vs. Capture)</td>
+<td>-18.3 mm</td>
+<td>11.3</td>
+<td>0.108</td>
+</tr>
+</tbody>
+</table>
+<p>The origin effect is small and not statistically significant – much
+smaller than the ~2.4x K ratio implied by the hatch-anchored age model.
+This supports the hypothesis that most of the apparent origin effect
+elsewhere is a pond-year/cohort confound, not a real pond-growth-rate
+difference. (Caveat noted at the time: only 6 of the 36 established fish
+fell near the stocked cohort’s exact 250 mm starting size, and the two
+groups’ growing seasons are one calendar year apart – 2022 vs. 2023 – so
+this is suggestive, not conclusive, on its own.)</p>
+</div>
+<div id="model-revision" class="section level3">
+<h3>Model revision</h3>
+<p>Rather than continuing to assume one growth regime from hatch to now
+for stocked fish, the model now anchors each stocked fish’s growth at
+<strong>its own release size and date</strong> (a Fabens-style reset),
+and drops the origin-specific growth rate entirely in favor of a single
+shared <code>K</code> (still varying by pond-year/cohort via
+<code>v[pondyear]</code>):</p>
+<pre><code>Recruit-origin row i:  mu_i = L0 + (Linf - L0) * (1 - exp(-K_i * age_i))
+                        (age_i = years since assumed hatch date, unchanged; L0 anchored on
+                         Hamman 1982 as before)
+Stocked-origin row i:  mu_i = TLrel_i + (Linf - TLrel_i) * (1 - exp(-K_i * t_i))
+                        (t_i = years since THIS FISH&#39;s own release-anchor date; TLrel_i =
+                         that fish&#39;s release-anchor TL -- both known data, not modeled)
+K_i = exp(logK + v[pondyear_i])          &lt;- single shared logK (primary model)
+    = exp(logK[origin_i] + v[pondyear_i]) &lt;- origin-specific logK (sensitivity check only)
+TL_i ~ Normal(mu_i, sigma)</code></pre>
+<p>This directly implements “adjust the effective age of stocked fish
+for growth purposes”: a stocked fish’s growth clock resets at release
+rather than counting hatchery years, and the same curve applies to
+everyone once they are in the pond. It also removes the model’s least
+defensible assumption (a constant, unobserved hatchery growth rate).</p>
+<p><strong>Release-anchor caveat:</strong> the true stocking-event
+record has a measured TL for the 2017-03-21 cohort (year class 2012, 899
+fish; TL 234-299 mm at t=0, an exact release anchor) but
+<strong>not</strong> for the 2023-04-12 cohort (year class 2018, 300
+fish – no <code>total_length</code> recorded at that stocking event).
+For that cohort the anchor falls back to each fish’s own first later
+record with a measured TL (in practice Dec 2023, ~244 days post-release,
+TL 297-406 mm, n = 80 of 300 fish) – growth between true release and
+that first measurement is unobserved and not attributed to anyone.
+Practically, this means all 80 of those fish carry <strong>zero</strong>
+weight for estimating K (an anchor row is a tautology:
+<code>mu = TLrel_i</code> regardless of K at t = 0), rather than
+misleadingly informing a blended rate as they effectively did before.
+All real growth information on stocked-origin fish now comes from the
+2012 cohort’s repeat measurements: only <strong>89 of 979</strong>
+release-anchored fish (<code>n_informative_stocked</code> in the saved
+data) have any post-release recapture at all (81 with one extra
+measurement, 8 with two). This is a much smaller <em>informative</em>
+sample than the raw row count suggests – appropriately so, since the
+earlier richness was informing a blended hatchery+pond rate, not a
+pond-only one.</p>
+<p>Priors unchanged: <code>Linf ~ Normal(635, 50)</code>,
+<code>logK ~ Normal(log(0.15), 0.5)</code>,
+<code>L0 ~ Normal(6.8, 0.25)</code> mm (Hamman 1982). Same
+barker-sampler block over <code>{Linf, logK[...]}</code> as before
+(requires <code>buildDerivs = TRUE</code>); this model converges even
+better than the hatch-anchored version (R-hat &lt;= 1.02 vs &lt;= 1.06),
+likely because the release anchor is a hard data constraint rather than
+an estimated parameter interacting with the rest of the curve.</p>
+</div>
+<div id="results-origin-effect-vanishes-on-the-full-dataset-not-just-the-one-ip5-cell" class="section level3">
+<h3>Results: origin effect vanishes on the full dataset, not just the
+one IP5 cell</h3>
+<p>Three models compared by WAIC: the primary shared-K model, a
+fully-pooled (no pond-year) variant, and a sensitivity check that
+re-adds an origin-specific <code>logK</code> on top of release-anchoring
+(to test whether origin still matters once anchoring is fixed, using the
+<em>entire</em> 1,601-row dataset rather than just the 143-fish IP5
+natural experiment):</p>
 <table>
 <thead>
 <tr class="header">
 <th>Model</th>
-<th>k</th>
-<th>−2lnL</th>
-<th>AIC</th>
-<th>ΔAIC</th>
-<th>weight</th>
+<th>WAIC</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>gap_pdot (top)</strong></td>
-<td>11</td>
-<td>1304.63</td>
-<td>1326.63</td>
-<td>0.00</td>
-<td>0.997</td>
+<td><strong>shared K + pondyear (primary)</strong></td>
+<td><strong>13,646.35</strong></td>
 </tr>
 <tr class="even">
-<td>gap_ptime</td>
-<td>19</td>
-<td>1300.39</td>
-<td>1338.39</td>
-<td>11.76</td>
-<td>0.003</td>
+<td>origin + pondyear (sensitivity check)</td>
+<td>13,646.87</td>
 </tr>
 <tr class="odd">
-<td>const_ptime</td>
-<td>11</td>
-<td>1592.01</td>
-<td>1614.01</td>
-<td>287.4</td>
-<td>~0</td>
-</tr>
-<tr class="even">
-<td>dieoff_pdot</td>
-<td>4</td>
-<td>1890.48</td>
-<td>1898.48</td>
-<td>571.9</td>
-<td>~0</td>
-</tr>
-<tr class="odd">
-<td>dieoff_ptime</td>
-<td>12</td>
-<td>1886.03</td>
-<td>1910.03</td>
-<td>583.4</td>
-<td>~0</td>
-</tr>
-<tr class="even">
-<td>const_pdot</td>
-<td>3</td>
-<td>1916.42</td>
-<td>1922.42</td>
-<td>595.8</td>
-<td>~0</td>
+<td>shared K, pooled (no pondyear)</td>
+<td>14,771.76</td>
 </tr>
 </tbody>
 </table>
-<p>(full table in
-<code>data/GIEL_ClassicCJS_RobustDesign_Annual.RData$aic_ip5</code>).
-<strong><code>gap</code> (full annual time variation) crushes
-<code>dieoff</code> (single event dummy) and <code>const</code> by 500+
-AIC units</strong> — a single “crash year” indicator is far too coarse
-for IP5; survival genuinely varies year to year beyond just the FY2020
-collapse. <strong>Detection does not need to vary by year</strong>:
-<code>gap_pdot</code> beats <code>gap_ptime</code> by 11.8 AIC (weight
-0.997 vs 0.003) even though <code>gap_ptime</code> has 8 more free
-detection parameters — a single shared detection probability across all
-years fits this smaller, IP5-only dataset better once the extra
-parameters are penalized. Results below are from
-<code>gap_pdot</code>.</p>
-</div>
-<div id="survival-phi-estimates-top-model-gap_pdot" class="section level2">
-<h2>3. Survival (Phi) estimates, top model (<code>gap_pdot</code>)</h2>
+<p><strong>The origin sensitivity check is a statistical tie with the
+shared-K model (Delta WAIC = 0.52)</strong> – a dramatic reversal from
+the hatch-anchored version’s ~800-unit gap favoring origin.
+Pond-year/cohort variation still matters a great deal (Delta WAIC =
+1,125 vs. pooled). In the origin-check model itself, implied K is nearly
+identical between origins:</p>
 <table>
 <thead>
 <tr class="header">
-<th>Interval (FY → FY+1)</th>
-<th>Sizeclass</th>
-<th>Survival</th>
+<th>Origin</th>
+<th>K (yr^-1)</th>
 <th>95% CI</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>2017 → 2018</td>
-<td>adult</td>
-<td>0.897</td>
-<td>0.852–0.929</td>
+<td>StockedCohort</td>
+<td>0.718</td>
+<td>0.47 - 1.01</td>
 </tr>
 <tr class="even">
-<td>2017 → 2018</td>
-<td>young</td>
-<td>0.958</td>
-<td>0.672–0.996</td>
-</tr>
-<tr class="odd">
-<td>2018 → 2019</td>
-<td>adult</td>
-<td>0.056</td>
-<td>0.034–0.090</td>
-</tr>
-<tr class="even">
-<td>2019 → 2020</td>
-<td>adult</td>
-<td>0.941</td>
-<td>0.610–0.994</td>
-</tr>
-<tr class="odd">
-<td><strong>2020 → 2021</strong></td>
-<td>adult</td>
-<td><strong>8.3×10⁻⁶</strong></td>
-<td>~0–1 (degenerate)</td>
-</tr>
-<tr class="even">
-<td>2021 → 2022</td>
-<td>adult</td>
-<td>0.888</td>
-<td>fixed, SE = 0</td>
-</tr>
-<tr class="odd">
-<td>2022 → 2023</td>
-<td>adult</td>
-<td>0.846</td>
-<td>0.800–0.883</td>
-</tr>
-<tr class="even">
-<td>2023 → 2024</td>
-<td>adult</td>
-<td>0.657</td>
-<td>0.596–0.713</td>
-</tr>
-<tr class="odd">
-<td>2024 → 2025</td>
-<td>adult</td>
-<td>0.579</td>
-<td>0.502–0.652</td>
-</tr>
-<tr class="even">
-<td>2025 → 2026</td>
-<td>adult</td>
-<td>0.460</td>
-<td>0.363–0.561</td>
+<td>AssumedRecruit</td>
+<td>0.768</td>
+<td>0.63 - 0.91</td>
 </tr>
 </tbody>
 </table>
-<p><strong>The FY2020 interval (the documented Jan–Sep 2020 die-off
-window) collapses to an essentially zero, boundary/degenerate
-estimate</strong> (8.3×10⁻⁶, SE 7.7×10⁻⁴, CI spanning the entire [0,1]
-range) — the same quasi-complete-separation phenomenon already
-documented for the die-off cells in
-<code>GIEL_ClassicCJS_PondGrouped_Summary.md</code> §3, arising
-naturally here because <code>gap</code> gives every year its own free
-parameter. This matches the independent empirical floor exactly:
-<strong>0 of the 300 IP5 FY2017-cohort fish known alive at the FY2020
-occasion were ever detected again at FY2021 or later</strong>
-(<code>floor_2020</code>, §7 below).</p>
-<p><strong>The following FY2021 → FY2022 estimate (0.888) has SE = 0 and
-should not be trusted as a real, data-informed number.</strong> Because
-essentially none of the original FY2017 cohort survived past the FY2020
-crash, there is almost no fish actually at risk during the FY2021
-interval to inform this parameter — the optimizer reports a value with
-zero estimated uncertainty, a classic sign of a parameter pinned at (or
-never moved from) its starting value rather than a genuinely
-likelihood-informed estimate. Treat FY2021 → FY2022 survival as
-<strong>not identifiable from this IP5-only, 2-cohort design</strong>,
-not as “recovery to 89% survival.”</p>
-<p>All other intervals (FY2017–FY2019 and FY2022–FY2025) have plausible
-point estimates with finite, reasonable SEs.</p>
-</div>
-<div id="detection-p-estimate-top-model" class="section level2">
-<h2>4. Detection (p) estimate, top model</h2>
+<p>P(K[Stocked] &lt; K[Recruit]) = 0.63 – essentially a coin flip, not
+the P = 1.0 (non-overlapping CIs) found under hatch-anchoring.
+<strong>This confirms BK’s hypothesis on the full dataset:</strong> once
+growth is anchored at release rather than hatch, stocked and
+wild-recruit bonytail show no credible difference in pond growth
+rate.</p>
+<p><strong>Primary (shared-K) model posterior</strong> (barker-sampler
+block, 3 chains, 100k iter/30k burn-in/thin 10, R-hat &lt;= 1.02 for
+every parameter):</p>
 <table>
 <thead>
 <tr class="header">
-<th>p (constant across years)</th>
+<th>Parameter</th>
+<th>Mean</th>
+<th>SD</th>
 <th>95% CI</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>0.991</td>
-<td>0.973–0.997</td>
+<td><code>Linf</code> (mm)</td>
+<td>406.1</td>
+<td>5.3</td>
+<td>395.9 - 416.7</td>
+</tr>
+<tr class="even">
+<td><code>logK</code></td>
+<td>-0.233</td>
+<td>0.077</td>
+<td>-0.386 - -0.086</td>
+</tr>
+<tr class="odd">
+<td><code>L0</code> (mm)</td>
+<td>6.80</td>
+<td>0.25</td>
+<td>6.32 - 7.29</td>
+</tr>
+<tr class="even">
+<td><code>sigma</code> (mm)</td>
+<td>17.0</td>
+<td>0.3</td>
+<td>16.4 - 17.6</td>
+</tr>
+<tr class="odd">
+<td><code>sigma_v</code></td>
+<td>0.267</td>
+<td>0.064</td>
+<td>0.175 - 0.419</td>
 </tr>
 </tbody>
 </table>
-<p>Detection is very high and estimated with a single parameter
-(<code>p ~ 1</code> beat <code>p ~ time</code> on AIC, §2) — consistent
-with the high detection rates found in every other GIEL analysis in this
-project (pooled and pond-grouped classic CJS, Bayesian joint model).</p>
+<p>Implied shared <code>K</code> = 0.792/yr (0.68-0.92). Two further
+improvements over the hatch-anchored, origin-differentiated fit:
+<strong>residual sigma dropped from 22.7 mm to 17.0 mm</strong> (a
+better-fitting model with fewer parameters – not just a simpler one),
+and <code>Linf</code>’s CI is much narrower (5.3 mm SD vs. 11.8 mm)
+because release-anchoring uses hard data constraints instead of an
+additional estimated parameter per origin.</p>
 </div>
-<div id="parametric-bootstrap-gof-on-the-top-model" class="section level2">
-<h2>5. Parametric bootstrap GOF on the top model</h2>
-<p>Same recipe as <code>GIEL_ClassicCJS_PondGrouped_Summary.md</code> §4
-(simulate each of the 600 real fish’s history forward under the fitted
-model’s real Phi/p, refit the identical model, compare deviance to a
-cohort-saturated [entry-FY × initial sizeclass] reference), but with
-each bootstrap replicate’s refit isolated in its own <code>callr</code>
-subprocess (see §0).</p>
-<table>
-<thead>
-<tr class="header">
-<th>Quantity</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>Observed deviance</td>
-<td>6.98</td>
-</tr>
-<tr class="even">
-<td>Bootstrap deviance: mean / SD</td>
-<td>7.65 / 3.37</td>
-</tr>
-<tr class="odd">
-<td><strong>ĉ (mean-based)</strong></td>
-<td><strong>0.912</strong></td>
-</tr>
-<tr class="even">
-<td>ĉ (median-based)</td>
-<td>0.971</td>
-</tr>
-<tr class="odd">
-<td>Bootstrap p-value, P(deviance_boot ≥ deviance_obs)</td>
-<td>0.53</td>
-</tr>
-<tr class="even">
-<td>Replicates crashed/failed</td>
-<td><strong>0 of 300</strong></td>
-</tr>
-</tbody>
-</table>
-<p><strong>Clean fit, no overdispersion</strong> (ĉ &lt; 1, bootstrap p
-= 0.53 — the observed deviance sits right in the middle of what the
-fitted model itself produces by chance). This is a much better-behaved
-GOF result than either the pooled all-3-pond model (crude null-model ĉ ≈
-8.4) or the pond-grouped model (ĉ ≈ 1.37) — expected, since restricting
-to one pond and letting survival vary completely freely by year leaves
-very little unexplained heterogeneity for a saturated-cohort reference
-to detect. See
-<code>model/GIEL_ClassicCJS_RobustDesign_Annual_bootGOF.png</code> for
-the bootstrap distribution with the observed deviance marked. The
-<strong>0-of-300 crash/failure rate</strong> confirms the
-annual-occasion redesign (§0) resolved the earlier monthly-design
-crashes.</p>
+<div id="new-caveat-introduced-by-this-revision-linf-is-now-below-the-observed-maximum-length" class="section level3">
+<h3>New caveat introduced by this revision: Linf is now below the
+observed maximum length</h3>
+<p><strong><code>Linf</code>’s posterior is entirely below the observed
+maximum TL in the dataset (442 mm) – the single highest posterior draw
+across all three chains is 427.5 mm, i.e. 0% posterior support for
+<code>Linf</code> &gt;= 442 mm.</strong> This is the same
+identifiability failure already flagged for the increment (Fabens) model
+(<code>GIEL_GrowthSeasonThreshold_Summary.md</code> section 0b) and
+explicitly avoided by the previous (hatch-anchored) age-based fit, whose
+<code>Linf</code> sat safely above the observed max. It has re-appeared
+here despite the much better origin/WAIC story. <strong>Likely
+cause:</strong> real growth information on large/old fish is thin under
+release-anchoring – only 89 of 979 stocked fish have any post-release
+repeat measurement, and the recruit data (which drives most of the
+shared <code>K</code> estimate) tops out at 408 mm. Four individual fish
+(3 stocked, 1 recruit; TL 408-442 mm) are underpredicted by 20-43 mm at
+posterior-mean parameters. <strong>Read this model’s <code>Linf</code>
+as a fitted compromise for interpolation within the well-populated size
+range, not a literal asymptote</strong> – exactly the same caution
+already standing for the increment model and (to a lesser degree) for
+the GAM-based growth-season threshold work. The <em>shape</em>
+conclusion (no origin effect once anchored at release) is not undermined
+by this – it comes from the WAIC/K comparison, which is well-identified
+– but the specific <code>Linf</code>/<code>K</code> values should not be
+over-interpreted as final growth-curve parameters.</p>
 </div>
-<div id="empirical-floor-check-fy2020-die-off" class="section level2">
-<h2>6. Empirical floor check (FY2020 die-off)</h2>
-<p>Because occasions are annual, the “known alive going into the crash,
-ever seen again after” floor is direct: of the 300 IP5 stocked fish
-known alive at the FY2020 occasion (entered on or before FY2020),
-<strong>0 were detected at the FY2021 occasion or later</strong>
-(<code>floor_2020</code>: <code>alive = 300, seen_after = 0</code>).
-This is the same total-loss signature documented from the raw
-known-alive series in <code>AGENTS.md</code> (IP5 known-alive fell from
-a post-tagging peak of 145 in Dec 2019 to 0 by Sep 2020) and
-independently confirms the near-zero Phi estimate in §3.</p>
-</div>
-<div id="comparison-against-the-bayesian-giel-only-robust-design-fit-ip5-pond-2" class="section level2">
-<h2>7. Comparison against the Bayesian GIEL-only robust-design fit (IP5
-= pond 2)</h2>
-<p>The script computes a quick, <strong>simplified</strong>
-annualized-survival companion from
-<code>data/BWRobustDesign_MCMC_giel.RData</code> for reference:
-<code>plogis(lphiA[2, y] + 1{y=2020}·dE[2])^12</code> (posterior mean),
-i.e. it applies the pond’s <code>dE</code> die-off offset across
-<strong>all 12 months</strong> of the FY2020 season as a simplification,
-rather than only the calendar months actually flagged by the event
-window (<code>nEvt[IP5, FY2020] = 9</code> of 12 — see the more precise
-decomposition used in <code>AGENTS.md</code>’s 2026-09-11 cross-check
-entry, which instead computes
-<code>plogis(lphiA)^(12-9) · plogis(lphiA+dE)^9 ≈ 0.041</code> for
-FY2020, vs. this script’s cruder
-<code>plogis(lphiA+dE)^12 ≈ 0.021</code>; both are near-zero and
-consistent with the 0/300 floor in §6).</p>
-<table>
-<thead>
-<tr class="header">
-<th>FY (season)</th>
-<th>Bayesian, naive 12-month dE (this script)</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>2017</td>
-<td>0.814</td>
-</tr>
-<tr class="even">
-<td>2018</td>
-<td>0.154</td>
-</tr>
-<tr class="odd">
-<td>2019</td>
-<td>0.745</td>
-</tr>
-<tr class="even">
-<td>2020</td>
-<td>0.021 (or 0.041, precise nEvt-weighted version — see above)</td>
-</tr>
-<tr class="odd">
-<td>2021</td>
-<td>0.136</td>
-</tr>
-<tr class="even">
-<td>2022</td>
-<td>0.783</td>
-</tr>
-<tr class="odd">
-<td>2023</td>
-<td>0.627</td>
-</tr>
-<tr class="even">
-<td>2024</td>
-<td>0.542</td>
-</tr>
-<tr class="odd">
-<td>2025</td>
-<td>0.419</td>
-</tr>
-<tr class="even">
-<td>2026</td>
-<td>0.463</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Important indexing caveat — this is not an apples-to-apples
-comparison with §3.</strong> The Bayesian column above is a
-<strong>pond-level, all-fish (stocked + netting-tagged) seasonal
-survival rate</strong> derived from <code>lphiA[IP5, y]</code>, whereas
-§3’s classic CJS Phi is fit to <strong>stocked-only</strong> fish across
-just 2 cohorts and lets every year float completely freely.</p>
-<div id="stocked-only-bayesian-re-run-fairer-comparison-2026-09-11" class="section level3">
-<h3>7.1 Stocked-only Bayesian re-run (fairer comparison,
-2026-09-11)</h3>
-<p>To test whether restricting the Bayesian comparison to stocked-only
-fish narrows the gap with the classic CJS, the same posterior
-(<code>data/BWRobustDesign_MCMC_giel.RData</code>) was re-summarized
-using only IP5’s 600 stocked GIEL
-(<code>rd_Fish |&gt; filter(pond_new==2, origin==1)</code>) — exactly
-the classic CJS’s 2 cohorts (300 tagged 2017-03-21, 300 tagged
-2022-03-09), confirming the two models’ fish sets line up as expected.
-The <strong>whole-season <code>b_post</code> approximation</strong> is
-used (apply the stocked-origin post-release offset
-<code>b_post[1,1]</code> to the entire stocking-FY season, mirroring the
-existing whole-season <code>dE</code> convention already used for the
-die-off year); a calendar-precise version that tracks each cohort’s
-actual 12 months post-stocking was also tried but rejected as unstable
-(it mixes two different seasons’ <code>lphiA</code> depending on the
-exact tagging date, and gives very different first-year survival for the
-two cohorts — 0.41 vs 0.71 — driven by an arbitrary choice of calendar
-reference point that annual CJS occasions don’t have).</p>
-<table>
-<colgroup>
-<col width="25%" />
-<col width="25%" />
-<col width="25%" />
-<col width="25%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>FY (season)</th>
-<th>Bayesian, all IP5 GIEL (§7)</th>
-<th><strong>Bayesian, stocked-only (n=600)</strong></th>
-<th>Classic CJS Phi (§3, adult)</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>2017</td>
-<td>0.814</td>
-<td><strong>0.809 (0.748–0.863)</strong></td>
-<td>0.897</td>
-</tr>
-<tr class="even">
-<td>2018</td>
-<td>0.154</td>
-<td><strong>0.154 (0.120–0.191)</strong></td>
-<td>0.056</td>
-</tr>
-<tr class="odd">
-<td>2019</td>
-<td>0.745</td>
-<td><strong>0.745 (0.617–0.856)</strong></td>
-<td>0.941</td>
-</tr>
-<tr class="even">
-<td>2020</td>
-<td>0.021 (naive) / 0.041 (precise)</td>
-<td><strong>0.041 (0.017–0.077)</strong></td>
-<td>8.3×10⁻⁶ (degenerate)</td>
-</tr>
-<tr class="odd">
-<td>2021</td>
-<td>0.136</td>
-<td><strong>0.136 (0.005–0.528)</strong></td>
-<td>0.888 (SE=0, unidentifiable)</td>
-</tr>
-<tr class="even">
-<td>2022</td>
-<td>0.783</td>
-<td><strong>0.777 (0.713–0.832)</strong></td>
-<td>0.846</td>
-</tr>
-<tr class="odd">
-<td>2023</td>
-<td>0.627</td>
-<td><strong>0.627 (0.567–0.685)</strong></td>
-<td>0.657</td>
-</tr>
-<tr class="even">
-<td>2024</td>
-<td>0.542</td>
-<td><strong>0.542 (0.467–0.616)</strong></td>
-<td>0.579</td>
-</tr>
-<tr class="odd">
-<td>2025</td>
-<td>0.419</td>
-<td><strong>0.419 (0.327–0.517)</strong></td>
-<td>0.460</td>
-</tr>
-<tr class="even">
-<td>2026</td>
-<td>0.463</td>
-<td><strong>0.463 (0.255–0.691)</strong></td>
-<td>— (no 10th interval in classic CJS)</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Conclusion: restricting to stocked-only fish moves the
-Bayesian trajectory by ≤ 0.006 in every season</strong> (compare the
-“all IP5 GIEL” and “stocked-only” columns) — because
-<code>b_post[1,1]</code> (stocked-origin post-release survival offset)
-has posterior mean only <strong>−0.031 logit units</strong> (95% CI
-−0.110 to −0.001), a small and only marginally-distinguishable-from-zero
-effect. <strong>This is a structural, not a data-subsetting,
-limitation:</strong> the joint Bayesian model has no mechanism for
-stocked- vs. netting-tagged/established-origin fish to have different
-<em>long-run</em> annual survival at IP5 — origin only enters as a
-small, temporary, imprecisely-estimated 6-month post-release offset, so
-pooling in netting-tagged fish barely perturbs the trajectory in the
-first place.</p>
-<p><strong>The year-by-year disagreement with the classic CJS therefore
-persists after this fix</strong> — e.g. FY2018 (classic 0.056 vs
-Bayesian stocked-only 0.154), FY2019 (0.941 vs 0.745), FY2021 (0.888,
-itself unreliable per §3, vs 0.136) — and traces to <strong>model
-structure</strong> (the Bayesian model’s single shared
-<code>lphiA[IP5, y]</code> season effect vs. the classic CJS’s fully
-free, unconstrained annual Phi for a 2-cohort population), not to which
-fish are included in the Bayesian posterior summary. FY2022–FY2025,
-where both cohorts are simultaneously at risk in the classic CJS and the
-Bayesian season effect is presumably better informed by more
-contemporaneous data, show the closest agreement (differences of
-0.02–0.30, versus 0.09–0.75 in FY2018/FY2019/FY2021).</p>
-<p><strong>Where the two models remain most directly comparable — the
-FY2020 crash itself and the 0/300 empirical floor — they still agree
-closely</strong>: classic CJS ≈ 8×10⁻⁶ (degenerate low), Bayesian
-stocked-only ≈ 0.041, both effectively “collapsed to near zero.” This
-remains the extent of the genuine cross-validation between the two
-models; outside the crash year, and now independent of which fish subset
-is used, the two are not expected to match season-by-season.</p>
-</div>
-<div id="is-the-disagreement-just-the-crash-years-and-is-the-classic-cjs-more-accurate-2026-09-11" class="section level3">
-<h3>7.2 Is the disagreement just the crash years, and is the classic CJS
-more accurate? (2026-09-11)</h3>
-<p>Two follow-up questions worth recording. <strong>First: does real
-year-to-year variability persist even excluding the two uninformative
-rows (FY2020’s true near-zero die-off and FY2021’s SE = 0 boundary
-artifact)?</strong> Yes. The remaining classic CJS estimates (§3) are
-all well-identified — no boundary values, all with finite, reasonably
-tight SEs — and still swing substantially: FY2017 0.897 (SE 0.019),
-<strong>FY2018 0.056 (SE 0.014, CI 0.034–0.090)</strong>, FY2019 0.941
-(SE 0.066), FY2022 0.846 (SE 0.021), FY2023 0.657 (SE 0.030), FY2024
-0.579 (SE 0.039), FY2025 0.460 (SE 0.051). The FY2018 value is the most
-notable: a <strong>precisely-estimated near-total loss in a year with no
-documented die-off event</strong> in
-<code>data/BWDieOffEvents.csv</code> (only the FY2020 IP5 and FY2022 IP2
-crashes are recorded) — either a real undocumented mortality event at
-IP5, or an artifact of the classic CJS’s own assumptions (e.g.,
-size-class/detection structure, or thin cohort information once the
-FY2017 cohort has mostly aged into “adult”). This has <strong>not yet
-been cross-checked against the raw known-alive/contact series</strong>
-for IP5 around FY2018 — a natural next step. Given this, the Bayesian
-model’s <code>lphiA[IP5, y] ~ N(mu_phi, sigma_phi)</code> hierarchical
-structure — a single, fairly modest <code>sigma_phi</code> shared across
-seasons — will structurally shrink genuine sharp, regime-like drops
-(like FY2018) toward the pond-level mean; it has no mechanism (beyond
-the event-specific <code>dE</code> term for documented die-offs) to
-represent an occasional, precise, large deviation.</p>
-<p><strong>Second: does this mean the classic CJS’s (MLE) annual
-estimates are simply more accurate?</strong> Not unconditionally — the
-two estimators fail in different ways, and this data set shows both
-failure modes:</p>
-<ul>
-<li>The classic CJS has no shrinkage, so it can track a real regime
-shift precisely <em>when there is enough data in that interval</em> —
-but that is also exactly where it broke down for FY2020/FY2021
-(boundary/degenerate estimates, §3), and the pond-grouped model
-(<code>GIEL_ClassicCJS_PondGrouped_Summary.md</code> §3) showed the same
-quasi-complete-separation-sized SEs are a general risk in crash
-cells.</li>
-<li>The Bayesian model’s partial pooling stabilizes estimates and avoids
-boundary degeneracy, but at the cost of underrepresenting real episodic
-shocks — it treats survival as varying smoothly around a pond-level mean
-rather than allowing occasional sharp drops.</li>
-<li>The parametric bootstrap GOF for this IP5-only classic CJS was clean
-(ĉ ≈ 0.91 mean-based, bootstrap p = 0.53, §5) — some evidence the
-freely-varying annual Phi is tracking real signal rather than
-overfitting noise, at least away from the crash-year boundary
-cases.</li>
-</ul>
-<p><strong>Working conclusion:</strong> the classic CJS’s freely-varying
-annual Phi is probably a better description of IP5’s actual year-to-year
-survival dynamics, because those dynamics apparently include real
-episodic shocks (documented FY2020, and possibly an undocumented FY2018
-event) that the Bayesian model’s hierarchical structure is not designed
-to capture. But this is not a general claim that MLE point estimates are
-“more accurate” — the classic CJS’s own crash-year estimates (FY2020,
-FY2021) are themselves unreliable at the boundary, and its narrower
-stocked-only, single-pond design trades the Bayesian model’s richer
-structure (untagged pool, recruitment, netting joins) for that
-additional survival flexibility. Any future reconciliation should
-probably target giving the Bayesian model’s <code>lphiA</code> more
-freedom to vary by season (e.g., an IP5-specific unstructured year
-effect, analogous to the XYTE three-stage model’s <code>eps_J</code>)
-rather than treating either estimator’s numbers as the presumptively
-correct one.</p>
+<div id="critical-caveat-ageorigin-confound-is-reduced-not-eliminated" class="section level3">
+<h3>Critical caveat: age/origin confound is reduced, not eliminated</h3>
+<p>The original hatch-anchored version had essentially zero age overlap
+between origins (recruit ages 0.66-3.94 yr vs. known-cohort hatch-ages
+4.97-10.7 yr). Release-anchoring substantially reduces this: time since
+release spans 0-9.4 yr (2012 cohort) and 0-3.4 yr (2018 cohort), both
+overlapping the recruit age range (0.66-3.94 yr). However, the
+<em>informative</em> (repeat-measured) stocked-fish data are still
+sparse (89 fish) and concentrated in the 2012 cohort, so this is an
+improvement in principle more than a fully resolved confound in practice
+– the IP5 natural experiment above remains the cleanest direct test
+because it holds pond and (approximately) calendar time fixed as well as
+size.</p>
 </div>
 </div>
-<div id="caveats" class="section level2">
-<h2>8. Caveats</h2>
-<ul>
-<li><strong>IP5-only, stocked-only.</strong> Unlike
-<code>GIEL_ClassicCJS.R</code>/<code>GIEL_ClassicCJS_PondGrouped.R</code>,
-this model excludes IP2, IP6, and all netting-tagged (“wild”) fish. It
-is a narrow, targeted cross-check on one pond’s die-off dynamics, not a
-general population survival model.</li>
-<li><strong><code>gap</code> is a full annual time factor, not a die-off
-dummy</strong> — the name is a holdover from the variable’s original
-conception; it produces essentially the same estimates as an
-unconstrained <code>Phi(~time)</code> model (with a size offset), which
-is why the FY2020 and FY2021 estimates behave like the
-boundary/separation cells documented for other fully time-varying GIEL
-models (<code>GIEL_ClassicCJS_PondGrouped_Summary.md</code> §3).</li>
-<li><strong>FY2021 → FY2022 survival (0.888, SE = 0) is not a credible
-estimate</strong> — see §3. Any reporting of this model’s survival
-trajectory should flag this interval as unidentifiable rather than as
-“recovery.”</li>
-<li><strong>The Bayesian comparison in §7 uses a simplified 12-month
-<code>dE</code> application</strong> for the FY2020 season; the more
-precise, nEvt-weighted version (documented in <code>AGENTS.md</code>)
-gives ≈0.041 instead of ≈0.021 for that season. Both are near the
-empirical floor and the distinction only matters for that one cell.</li>
-<li><strong>This model omits everything the Bayesian model includes
-beyond survival/detection</strong>: no untagged/recruit pool, no
-netting-based abundance information, no maturation/stage-transition
-structure, and (for IP5 specifically) no netting-tagged fish at
-all.</li>
-<li><strong>The §7.1 stocked-only Bayesian re-run was done ad hoc in the
-R console</strong> and is saved separately from the main
-<code>.RData</code> for this script, in
-<code>data/GIEL_IP5_StockedOnlyBayesianSensitivity.RData</code>
-(<code>annual_surv_stocked_wholeSeason</code>: 6,000 posterior draws ×
-10 FY columns; <code>bpost_stocked</code>: posterior draws of
-<code>b_post[1,1]</code>;
-<code>stocked_summary</code>/<code>bpost_stocked_summary</code>:
-posterior mean + 95% CI convenience tables; <code>notes</code>:
-derivation string) — this file is <strong>not</strong> produced by any
-script and must be regenerated by hand (filtering
-<code>BWRobustDesign_MCMC_giel.RData</code>’s <code>rd_Fish</code> to
-<code>pond_new == 2 &amp; origin == 1</code> and applying
-<code>b_post[1, 1]</code> across the stocking-FY season, per §7.1) if
-the underlying Bayesian fit is ever refit.</li>
-<li><strong>The remaining classic-CJS-vs-Bayesian disagreement (FY2018,
-FY2019, FY2021) is a model-structure finding, not a fish-subsetting
-artifact</strong> (§7.1) — restricting the Bayesian posterior to
-stocked-only fish changed every season’s estimate by ≤ 0.006, so any
-future reconciliation effort should target the survival-model
-architecture (e.g., letting <code>lphiA</code> vary more freely by
-cohort at IP5, or fitting the classic CJS’s fully time-varying Phi
-structure inside the Bayesian model) rather than the fish population
-each model draws on.</li>
-<li><strong>The disagreement is not limited to the two crash-affected
-rows</strong> (§7.2): excluding FY2020/FY2021, the remaining classic CJS
-estimates are all well-identified (no boundary values, tight SEs) yet
-still swing from 0.90 down to 0.056 (FY2018) and back to 0.94 (FY2019) —
-real, precisely-estimated year-to-year variability that the Bayesian
-model’s single, modest <code>sigma_phi</code> will shrink toward the
-pond mean. <strong>Neither estimator should be treated as
-unconditionally “more accurate”</strong>: the classic CJS can track real
-shocks precisely but degenerates at the boundary in genuine crash
-intervals, while the Bayesian model avoids boundary degeneracy but
-likely underrepresents sharp, episodic drops (including a possible
-undocumented FY2018 event, not yet cross-checked against the raw
-known-alive series).</li>
-</ul>
-</div>
-<div id="key-files" class="section level2">
-<h2>9. Key files</h2>
-<table>
-<colgroup>
-<col width="50%" />
-<col width="50%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>File</th>
-<th>Contents</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><code>model/GIEL_ClassicCJS_RobustDesign_Annual.R</code></td>
-<td>Build + fit script (IP5 stocked-only data prep, 6-model AIC
-comparison, subprocess-isolated parametric bootstrap GOF, Bayesian
-comparison, empirical floor check)</td>
-</tr>
-<tr class="even">
-<td><code>data/GIEL_ClassicCJS_RobustDesign_Annual.RData</code></td>
-<td><code>pond_check</code> (stocked-fish TL completeness by pond),
-<code>giel_ip5</code> (fish-level data + encounter history),
-<code>dp_ip5</code>/<code>ddl_ip5</code> (processed data, design data),
-<code>model_specs_ip5</code> (6-model formula list),
-<code>fits_ip5</code> (all 6 fitted <code>crm</code> objects),
-<code>aic_ip5</code> (AIC ranking),
-<code>top_name_ip5</code>/<code>top_ip5</code> (AIC-best model,
-<code>gap_pdot</code>), <code>preds_ip5</code> (real-scale Phi/p
-estimates + CIs), <code>n_suppressed</code>,
-<code>deviance_obs</code>/<code>dev_boot</code>/<code>c_hat_mean</code>/<code>c_hat_median</code>/<code>boot_p_value</code>/<code>n_crashed_or_failed</code>
-(bootstrap GOF), <code>annual_surv_bayes</code> (Bayesian comparison,
-§7), <code>floor_2020</code> (empirical floor, §6)</td>
-</tr>
-<tr class="odd">
-<td><code>model/GIEL_ClassicCJS_RobustDesign_Annual_bootGOF.png</code></td>
-<td>Bootstrap deviance histogram with the observed deviance marked</td>
-</tr>
-<tr class="even">
-<td><code>model/GIEL_ClassicCJS_RobustDesign.R</code></td>
-<td>Earlier, undocumented monthly robust-design attempt that motivated
-this script (see §0); not part of the analysis pipeline</td>
-</tr>
-<tr class="odd">
-<td><code>data/GIEL_IP5_StockedOnlyBayesianSensitivity.RData</code></td>
-<td>Stocked-only Bayesian re-run objects (§7.1):
-<code>annual_surv_stocked_wholeSeason</code> (6,000 × 10 posterior
-draws), <code>bpost_stocked</code> (posterior draws of
-<code>b_post[1,1]</code>),
-<code>stocked_summary</code>/<code>bpost_stocked_summary</code> (mean +
-95% CI), <code>notes</code> (derivation string). Not produced by any
-script — see §8 for how to regenerate.</td>
-</tr>
-</tbody>
-</table>
+<div id="caveats-to-carry-forward" class="section level2">
+<h2>Caveats to carry forward</h2>
+<ol style="list-style-type: decimal">
+<li><strong>April 1 birth-date assumption</strong> for recruits
+(unchanged) is a convention borrowed from this project’s Apr-Sep
+growing-season boundary, not a literature-sourced bonytail spawning
+date. No longer used for stocked fish (release-anchored instead).</li>
+<li><strong>YOY classification is a statistical assumption, not a
+validated age determination</strong> – fish are assigned age-0 status
+based on falling in a fall size distribution’s lower mode, not by any
+direct ageing method (otoliths, etc.). FY2018 is excluded (too few fish)
+and FY2019 is marginal (see table above).</li>
+<li><strong>Release-anchor gap for the 2018 year-class cohort</strong>
+(see “Release-anchor caveat” above) – no measured TL at the true
+2023-04-12 stocking event, so those 300 fish’s growth from release to
+first measurement (~244 days) is unobserved; none of them are currently
+informative for K.</li>
+<li><strong>Repeat measurements per fish are treated as independent
+rows</strong>, the same simplification used in the increment model; a
+full individual-random-effects growth model would be more rigorous but
+was not attempted.</li>
+<li>The missing <code>year_class</code> for the 2022-03-09 Pond 5
+stocking (300 fish) means that cohort contributes no age-length data at
+all under this approach – worth a database fix if this model is
+extended.</li>
+<li><strong><code>L0</code> is anchored on a single point estimate from
+one hatchery-culture paper</strong> (Hamman 1982, n and variance not
+reported in the summary read for this analysis) rather than a
+wild-population estimate for these specific bonytail broodstock; the SD
+(0.25 mm) reflects the paper’s stated 6.5-7.5 mm range, not a formally
+reported measurement uncertainty.</li>
+<li><strong><code>Linf</code> is now below the observed maximum
+length</strong> (see dedicated caveat above) – treat
+<code>Linf</code>/<code>K</code> as fitted-compromise values for
+interpolation, not literal growth-curve parameters, matching the
+standing caveat already in place for the increment model.</li>
+<li><strong>The IP5 natural-experiment test (n=143, one pond-year) is
+thin evidence on its own</strong>; the full-dataset origin-check WAIC
+tie is the stronger piece of evidence for “no origin effect,” but both
+point the same direction.</li>
+</ol>
 </div>
 </div>
 
