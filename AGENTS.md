@@ -186,6 +186,166 @@ Spot-check of whether the YCB three-stage density-dependent architecture should 
 
 ---
 
+## GIEL Growth-to-250mm-Threshold Side Analysis (`model/GIEL_GrowthSeasonThreshold.R`, 2026-09-12)
+
+Side project (BK request), separate from the joint robust-design / classic-CJS survival work above: estimates the probability that a bonytail first captured/stocked below the 250 mm TL size-class threshold at IP2, IP5, or IP6 grows past 250 mm TL after one Apr-Sep growth season.
+
+**Data limitation.** Of 936 GIEL first tagged/stocked <250 mm TL at these 3 ponds (2017-2024), only **41** have any later physical NFWG capture/stocking record with a measured TL — PIT scanner contacts (`StudyBWContacts`) do not record length, so a "recapture with known growth" is limited to opportunistic physical recaptures, not the full known-alive population. This is the entire usable sample for this analysis; results should be read with that in mind (see caveat below).
+
+**Growing-season exposure.** For each of the 41 recapture pairs, growth is assumed to occur only during Apr 1-Sep 30 (`gs_days`, the intersection of `[Date1, Date2]` with that window each year spanned) rather than raw elapsed calendar days — this matches the joint robust-design / YCB3S models' Apr→Oct between-year gap convention. **12 of the 41 pairs fall entirely within Oct-Mar** (`gs_days = 0`, elapsed 42-120 days) and were dropped: an exploratory plot of increment vs. elapsed days colored by first-capture month showed these winter-only pairs have near-zero growth (5-35 mm), confirming they carry no information about the growing-season rate. The remaining **29 pairs** land at 182, 364, 546, or 728 `gs_days` (1-4 full seasons).
+
+**Model.** Bayesian NIMBLE growth-increment regression fit through the origin (increment = 0 at `gs_days = 0`): `increment ~ Normal(rate[origin] * gs_days + u[pondyear] * gs_days, sigma)`, `u[pondyear] ~ Normal(0, sigma_py)`. Pond and year are combined into a single `PondYear` grouping factor (9 levels, 1-6 fish each) rather than two separate variance components, since per-pond-per-year samples are too sparse to identify both. Origin (capture vs. stocking) is a candidate fixed effect. Stepwise term reduction is via WAIC comparison across all four nested structures (full, origin-only, PondYear-only, neither) rather than classical AIC/LRT on `glm()`, since n = 29-41 was expected to risk separation under plain MLE.
+
+**Results.**
+- On raw calendar days (n=36, excluding the 5 pairs >700 days elapsed), linear-in-days clearly beat log1p(days) by WAIC, but neither `origin` nor `PondYear` improved WAIC over a fully-pooled model (all four structures within ~3 WAIC units) — winning (simplest) model: single rate ~0.34 mm/day (~125 mm/year), residual SD 35 mm.
+- Restricting exposure to growing-season days only (n=29) **reverses that finding**: `origin` still drops (cost ~0.2 WAIC), but `PondYear` is now clearly retained (WAIC 312.7 vs. 332.0 fully pooled, ~19-unit gap) — once winter noise is excluded, real pond/cohort differences in growing-season growth rate become visible (e.g. the 2017 Pond 6 cohort notably slower, `u = -0.315`; the 2019 Pond 6 and 2021 Pond 2 cohorts notably faster, `u = +0.239`/`+0.249`; most other cohorts near zero). Winning model: population growth rate **0.561 mm/day growing-season time (SD 0.099) → ~102 mm per full Apr-Sep season**, `sigma_py = 0.242` (~40% CV between pond-years), residual SD 46.9 mm, all R-hat ≈ 1.00.
+- Posterior-predictive **P(TL ≥ 250 mm after one growth season | TL1)**, marginalizing over the pond-year distribution: 0.50 (TL1=150mm), 0.65 (175mm), 0.78 (200mm), 0.87 (225mm), 0.92 (249mm). Notably lower than the raw-calendar-day model's implied one-year probabilities (0.76-1.00), because that model implicitly credited winter days with growth.
+
+**Caveat.** The 29-41 fish are an opportunistic subset of physically recaptured fish, not a random resample of the 936 tagged <250 mm — if capture probability correlates with size or growth rate, these estimates may be biased, and this cannot be corrected with available data. Per-pond-year sample sizes (1-6 fish) are small; treat the `u[pondyear]` deviations as suggestive, not definitive. Output saved to `data/GIEL_GrowthSeasonThreshold.RData` (`recap_pairs`, `gs_data`, `gs_fit_data`, the four NIMBLE fits `gs_full`/`gs_noorigin`/`gs_nogroup`/`gs_neither`, `gs_waic_tab`, `growth_season_threshold_probs`).
+
+**Refit as a Bayesian von Bertalanffy (Fabens) increment model (2026-09-12, BK request).** Replaced the linear-in-`gs_days` increment model with `increment ~ Normal((Linf - TL1)*(1 - exp(-K*t_years)), sigma)`, `K = exp(logK[origin] + v[pondyear])`, fit on the same 29 growing-season-only rows (`t_years = gs_days/365`). Priors: `Linf ~ Normal(635 mm, sd 50)` (weakly informative around the requested 62-65 cm TL) and `logK[k] ~ Normal(log(0.15), sd 0.5)` (weakly informative, median K = 0.15/yr, ~90% interval ≈ 0.06-0.4/yr, per the requested 0.1-0.2/yr center). Same four-way WAIC comparison (origin × pondyear) as before, now on the VBGF form; `model/GIEL_GrowthSeasonThreshold.R` picks the lowest-WAIC model programmatically rather than hardcoding the winner. **WAIC no longer clearly supports a PondYear term:** "pondyear only" (288.79) beats "fully pooled" (288.82) by only 0.03 — negligible, versus the linear model's ~19-unit gap; origin is still unsupported (+13 WAIC). Winning model reported is PondYear-only but is effectively tied with full pooling. **Key finding — Linf/K are not separately identified from this data:** posterior correlation r = -0.79; `Linf` moves to 556 mm (95% CI 432-691) from its 635 mm prior center, and implied `K` moves to 0.67/yr (95% CI 0.33-1.47/yr) from the requested 0.15/yr center. Mechanism: all recapture windows are short (182-728 days) and all `TL1` (117-249 mm) are far below any plausible `Linf`, so the data constrain only the product `K*(Linf-TL1)` (essentially the increment itself), not the two parameters separately; explaining the observed absolute growth (commonly 100-200 mm per half-season) while holding `Linf` near 635 mm requires `K` well above the requested 0.1-0.2/yr range. **This should be read as a genuine data limitation** (recaptures span too little of the growth curve to pin down the asymptote), not a bug — the `Linf`/`K` point estimates should not be reported as standalone growth-curve parameters; the model is more reliably used for its predicted increments/probabilities. **P(TL >= 250 mm after one growth season | TL1), von Bertalanffy model:** 0.66 (150mm), 0.79 (175mm), 0.88 (200mm), 0.94 (225mm), 0.98 (249mm) — broadly similar in shape to the linear model's 0.50-0.92, modestly higher because larger near-origin increments partly offset the now-explicit size-dependent deceleration. Saved objects unchanged in name (`gs_full`/`gs_noorigin`/`gs_nogroup`/`gs_neither`, now VBGF fits) plus new `gs_winner`, `winning_name`, `winner_use_group`, `LINF_PRIOR_MEAN`, `LINF_PRIOR_SD`, `LOGK_PRIOR_MEAN`, `LOGK_PRIOR_SD` in `data/GIEL_GrowthSeasonThreshold.RData`. `model/GIEL_GrowthSeasonThreshold_Summary.md` (pond-year deviation drivers, die-off cross-reference) describes the earlier linear model's `u[pondyear]` values and has **not** been updated for the VBGF refit — treat its specific deviation numbers as describing the retired linear model, though the underlying recapture-pair data and die-off timing cross-reference remain valid.
+
+**Rescoped to the full size spectrum (2026-09-12, BK request).** Originally scoped to only fish first tagged <250 mm TL (to directly target the size-class threshold probability); rescoped to fit a general growth model from EVERY consecutive pair of measured `StudyBWNFWG` records per fish x backwater across all 3 GIEL ponds, any size (not just tag -> first recapture) — 314 distinct fish contribute 362 growth-increment rows (`recap_pairs`), spanning `TL1` 117-442 mm (vs. 117-249 mm before). `gs_days` in this dataset takes only 0 or exact multiples of 182 (one Apr-Sep season) — fish are captured at discrete netting/stocking events near season boundaries — so the existing `gs_days > 0` filter alone satisfies "must span at least one full growing season, not just winter," no extra threshold needed. **Negative-growth pairs removed:** 11 rows have `TL2 < TL1` (bonytail do not shrink; almost certainly measurement/transcription error), flagged into `NegativeGrowthPairs` and excluded before fitting (only 1 of the 11 would otherwise have entered the model — the rest have `gs_days = 0` and were already excluded). Full list with dates/PITs is in `model/GIEL_GrowthSeasonThreshold_Summary.md` §0 for database correction; highest-priority record is `003D772AA4` (362→258 mm, Dec 2021→Mar 2022, a 104 mm drop far outside plausible measurement noise), the other 9 flagged Pond 6 records are small (1-4 mm) Dec→Mar discrepancies that look like ordinary measurement noise. Same VBGF model/priors as before, refit on 361 rows with longer chains (60k iter/20k burn/thin 10 — the larger `origin + pondyear` model needed this to converge; R-hat was 1.8-1.9 at the original 20k/5k/5 settings, now ≤ 1.05). **WAIC now clearly favors the full `origin + pondyear` model** (3309.3) over pondyear-only (3319.5), origin-only (3328.8), and fully-pooled (3343.9) — a real ~10-35-unit gap, unlike the 29-row fit's negligible one. But almost every pond-year is entirely one origin or the other (only `P5_2022` has both, 36 capture + 141 stocking), so origin and pondyear are severely confounded outside that one cell — read the individual `logK`/`v` estimates with that in mind. `Linf = 417.7 mm (SD 6.3)`, implied `K` 0.7-1.4/yr depending on pond-year — much more tightly identified than the 29-row fit (`Linf` SD dropped from 70 to 6.3), but see the Linf investigation immediately below for why this tight estimate is still not trustworthy as a literal asymptote. `P(TL >= 250mm after one growth season | TL1)`: 0.49 (150mm), 0.57 (175mm), 0.68 (200mm), 0.80 (225mm), 0.92 (249mm) — similar shape to, and only modestly different from, the original 29-row VBGF fit's 0.66-0.98.
+
+**Linf-below-observed-max-size investigation (2026-09-12).** The rescoped fit's `Linf` (417.7 mm) sits below the largest observed post-growth length (`TL2` max = 462 mm) — every posterior draw has `Linf < max(TL2)`. Tested two fixes, neither adopted: (1) **per-pond `Linf`** (3 independent priors, same origin+pondyear `K` structure) — WAIC 3311.7, tied with (very slightly worse than) the single-`Linf` model; Pond 2's `Linf` is essentially prior-only (627, SD 50.8 — that pond has almost no large fish, max `TL1` 296), Pond 5 partially informed (474, SD 27.7), and **Pond 6 alone converges to an even lower `Linf` (410.6, SD 6.6)** than the pooled model — giving the pond with the big fish its own asymptote does not fix the problem, because the same many-small-vs-3-large-fish tension exists within that one pond. (2) **Tight `Linf` prior** (`sd = 15` instead of 50, forcing `Linf` toward 635 mm) — WAIC 3458.7 (149 units worse) and clear systematic residuals: small fish (`TL1` < 200 mm) underpredicted by ~50 mm on average, mid-size fish (300-400 mm) overpredicted by ~17 mm. **Diagnosis:** classic Fabens-estimator bias toward low `Linf`/high `K` when individual fish vary in their own growth trajectory and few recaptures exist near the true asymptote — here only 3 of 361 rows have `TL1 > 400 mm` (all Pond 6, 2022 cohort, still growing 17-42 mm/season at that size), so those few points cannot outweigh hundreds of smaller/faster-relative-growth rows under a shared-`Linf`/`K` structure. **Conclusion: not fixable by reparameterizing `Linf` with the current data.** The single-global-`Linf`, loose-prior model (WAIC-best) is retained, but its `Linf`/`K` should not be read as literal growth-curve parameters — use the model only for interpolated increment predictions within the well-populated size range (~117-350 mm); do not extrapolate near/beyond 400 mm. A real fix would require more recaptures of fish already above ~400-450 mm. Alternative-fit objects saved to `data/GIEL_growth_pondLinf_fit.rds` and `data/GIEL_growth_tightLinf_fit.rds` (not part of the main pipeline).
+
+**Final decision (2026-09-12, BK): move forward with the current model's P(TL >= 250 mm) predictions.** No further `Linf`/`K` restructuring is planned after the §0b investigation (per-pond `Linf` and tight-prior alternatives both fit worse or no better). Adopted predictions, TL1 -> P(TL2 >= 250 mm) (from `growth_season_threshold_probs`): 150 mm -> 0.491, 175 mm -> 0.574, 200 mm -> 0.676, 225 mm -> 0.800, 249 mm -> 0.917. **Standing rule: any report or document that cites these numbers must repeat the `Linf`/`K` identifiability caveat** (the fitted `Linf` = 417.7 mm is a data-driven compromise, not a literal asymptote, informed by almost no fish above 400 mm) -- the canonical caveat language lives in `model/GIEL_GrowthSeasonThreshold_Summary.md` §0c and in the `GIEL_GrowthSeasonThreshold.R` header/section-4 output. The predictions are valid for interpolation (TL1 150-249 mm, well inside the well-populated size range) and should not be extended to TL1 near or above ~400 mm.
+
+**Pond-year deviation drivers and die-off cross-reference (`model/GIEL_GrowthSeasonThreshold_Summary.md`, 2026-09-12).** Unpacked which specific recapture points drive the two most extreme `u[pondyear]` deviations, since several groups have only 1-2 points. **P6_2017 (-0.315, n=3)** is dominated by a single fish (`0015AC37D8`) whose one recapture spans 728 growing-season days (2017-2021, 5 calendar years) at only 0.172 mm/day — a third of the population mean — while the group's other two (one-season, 2017-only) fish are near/above average (0.54-0.60 mm/day); this is one long-exposure fish's multi-year average dominating the fit, not three fish agreeing. **P6_2019 (+0.239, n=1)** is a single fish isolating the 2020 season at 1.10 mm/day, the fastest rate in the dataset — pure individual variation with n=1. **P2_2021 (+0.249, n=2)** is the one small group where both fish agree (0.89, 1.09 mm/day) — a real signal, not a single outlier — and it is the growing season immediately before IP2's 2022 die-off (see below), flagged as a WQ follow-up candidate (fast growth in survivors the year before a crash, possibly reduced competition from an already-declining population). **Die-off timing from `TotalCountIPGIEL` monthly known-alive counts** pins both confirmed GIEL die-offs to a single month each, both landing in the hypothesized summer-heat/early-autumn-DO-crash window: **IP2 fell 54 (Jun 2022) → 39 (Jul) → 0 (Aug 2022)**; **IP5 fell 52 (Jul 2020) → 42 (Aug) → 0 (Sep 2020)**. There is mechanically **no Pond 2 recapture pair covering the 2022 season and no Pond 5 pair covering the 2020 season** in the growth dataset — expected, since both ponds had almost no survivors left to recapture by those seasons, not additional evidence of the crashes. **Pond 6 has no documented die-off and no acute month-to-month drop** in its 2017-2023 known-alive series (smooth gradual decline only, unlike IP2/IP5's single-month collapses), so the P6_2017/P6_2019 outlier points read as individual variation rather than an unflagged Pond 6 event, given currently available data. No water-quality (temperature, DO) data exist yet for any pond; every WQ linkage here is a hypothesis for when that data becomes available, keyed to two specific windows: **IP2 Jul-Aug 2022** and **IP5 Aug-Sep 2020**.
+
+---
+
+## GIEL Age-Based Growth Model (`model/GIEL_VBGF_AgeLength.R`, 2026-09-14)
+
+A second bonytail growth model, complementary to the increment (Fabens) model above: builds
+a real age-length dataset (not just paired increments) from two age sources — (1) known
+stocking-cohort year class (`StudyBWNFWG$year_class`, populated for the 2017-03-21 cohort,
+899 fish, year class 2012, and the 2023-04-12 cohort, 300 fish, year class 2018; both ~5.2 yr
+old at release, typical of bonytail hatchery production; the 2022-03-09 stocking, 300 fish,
+has no recorded year class and is excluded) and (2) assumed young-of-year fall recruits (a
+per-FY 2-component `mclust` mixture on log(TL) among untagged Oct-Dec first-captures with no
+year class; FY2018 excluded for too few fish, FY2021 has no fall captures at all). Full
+detail, including the mixture-classification log and per-source age ranges, is in
+`model/GIEL_VBGF_AgeLength_Summary.md`.
+
+**L0 anchoring (2026-09-14).** The initial fit used an uninformed `t0` intercept, believing no
+literature hatch-length value existed for bonytail. BK corrected this: Hamman, R.L. 1982.
+"Induced Spawning and Culture of Bonytail Chub." *The Progressive Fish-Culturist* 44(4):
+201-203, doi:10.1577/1548-8659(1982)44[201:ISACOB]2.0.CO;2, reports a mean bonytail hatch
+length of 6.8 mm TL (range 6.5-7.5 mm). The model was refit with `L0 ~ Normal(6.8, 0.25)` mm
+replacing `t0` — this substantially changed the fitted curve (`Linf` 703 → 486 mm) since
+anchoring the age-0 intercept at a real point requires faster early growth to reach observed
+sizes, pulling the asymptote down. **Standing lesson: always check for a literature hatch/
+larval-size value before defaulting to an uninformed `t0` in any future VBGF work on this
+project's species** — it's easy to wrongly assume none exists (as the first draft of this
+model did).
+
+**Shared-K, release-anchored revision (2026-09-14, BK hypothesis, same day) — current model.**
+BK hypothesized that stocked (captive-reared) and wild-recruit bonytail actually grow at the
+*same rate* once both are in the pond, and that the L0-anchored model's large origin effect
+(K[Stocked] 0.221/yr vs. K[Recruit] 0.540/yr, non-overlapping CIs) was an artifact of blending
+~5.2 years of slow hatchery growth with subsequent pond growth into one continuous hatch-
+anchored curve for stocked fish, rather than a real pond-growth-rate difference.
+
+*Direct empirical test:* almost every pond-year cell in the increment model's data is
+single-origin, EXCEPT IP5 (Pond 5) 2022-23, where the 2022 stocking cohort (released at
+TL = 250 mm) overlaps in size and time with 36 previously-established fish. Restricting both
+to one-growing-season (182-day) pairs and regressing increment on `TL1 + Origin` (n = 143)
+gave a small, non-significant origin effect (-18.3 mm/season, SE 11.3, p = 0.108) — much
+smaller than the ~2.4x K ratio implied by the hatch-anchored model, supporting the hypothesis
+that the origin effect elsewhere is a pond-year confound, not a true growth-rate difference
+(caveat: thin overlap, n=6 near the exact 250mm start size, and the two groups' growing
+seasons are one calendar year apart).
+
+*Model fix:* stocked-fish records are now anchored at their OWN release size/date (Fabens-
+style reset) instead of an assumed hatch date, and the origin-specific `logK` is dropped in
+favor of a single shared `K` (still varying by pond-year/cohort via `v[pondyear]`):
+`mu_i = TLrel_i + (Linf - TLrel_i)(1 - exp(-K_i * t_i))` for stocked rows (`t_i` = years since
+that fish's release anchor; `TLrel_i` = its release-anchor TL, both known data), vs. the
+unchanged `L0`-anchored hatch-age form for recruit rows. Release-anchor caveat: the true
+stocking record has a measured TL for the 2012 cohort but NOT the 2018 cohort (no
+`total_length` at that stocking event) — for the 2018 cohort the anchor falls back to each
+fish's first later measured record (Dec 2023, ~244 d post-release), so growth from true
+release to first measurement is unobserved for those 80 of 300 fish; they end up carrying
+zero weight for K (an anchor row is a tautology at t=0), rather than misleadingly informing a
+blended rate as before. All real K information for stocked-origin fish now comes from just
+**89 of 979** release-anchored 2012-cohort fish with any post-release repeat measurement.
+
+*Result: CONFIRMS the hypothesis on the full dataset, not just the one IP5 cell.* WAIC is a
+statistical tie between the primary shared-K model (13,646.35) and a sensitivity check
+re-adding an origin-specific `logK` (13,646.87, Delta = 0.52) — a reversal from the
+hatch-anchored version's ~800-unit gap favoring origin. In the origin-check model, K is
+nearly identical between origins (StockedCohort 0.718/yr [0.47-1.01] vs. AssumedRecruit
+0.768/yr [0.63-0.91]; P(K[Stocked] < K[Recruit]) = 0.63, ~coin flip). The shared-K primary
+model gives `Linf` = 406.1 mm (95% CI 395.9-416.7, much tighter than the hatch-anchored
+version's 464-509) and `K` = 0.792/yr (0.68-0.92); residual sigma dropped from 22.7 mm to
+17.0 mm (better fit with fewer parameters). Convergence improved too (R-hat <= 1.02 vs.
+<= 1.06) — same barker-sampler block over `{Linf, logK}` as the L0 revision (curved
+Linf-logK ridge; requires `buildDerivs = TRUE`).
+
+**New caveat from this revision: `Linf` is now below the observed max TL (442 mm) — the
+single highest posterior draw across all chains is 427.5 mm, 0% posterior support for
+`Linf` >= 442.** This is the SAME identifiability failure already flagged for the increment
+(Fabens) model (`GIEL_GrowthSeasonThreshold_Summary.md` §0b) and was avoided by the previous
+hatch-anchored fit — it reappeared here likely because real growth information on large/old
+fish is thin under release-anchoring (only 89 informative stocked fish; recruit data tops out
+at 408 mm). **Read this model's `Linf`/`K` as fitted-compromise values for interpolation, not
+a literal asymptote** — the WAIC/origin comparison (the point of this revision) is
+well-identified and not undermined by this, but the specific curve parameters should not be
+over-reported. Full detail, tables, and all caveats: `model/GIEL_VBGF_AgeLength_Summary.md`.
+Three fits are archived for comparison: `data/GIEL_VBGF_AgeLength_t0.RData` (original `t0`
+form), `data/GIEL_VBGF_AgeLength_originDiff.RData` (`L0`-anchored, hatch-age, origin-
+differentiated), and the current `data/GIEL_VBGF_AgeLength.RData` (shared-K, release-anchored).
+
+**Standing lesson for future stocked-vs-wild growth/survival comparisons on this project:**
+when a captive-rearing or hatchery phase precedes release, do not assume one continuous growth
+(or survival) regime from origin (hatch/birth) to present for stocked animals — anchor at
+release when release size/date are known, and test for a residual origin effect only after
+that fix, ideally using any available same-pond/same-time overlap between stocked and wild
+individuals as a direct check before trusting a model-based origin comparison.
+
+---
+
+## GIEL Size-Tied Maturation Hazard — Design Plan for the Joint Robust-Design Model (planned, NOT implemented, 2026-09-14)
+
+**Status: design only — no code has been changed.** BK requested this plan while deliberately holding off on implementation, pending (1) review of the age-based growth model's output and (2) a search for additional data to better anchor `Linf`/`K`. This section exists so a future session can implement the change without re-deriving the reasoning; treat every item below as a proposal, not a completed step.
+
+**Motivation.** The joint 2-stage robust-design model (`model/BWRobustDesign_defs.R`) represents GIEL juvenile-to-adult (J->A) maturation with a single scalar `lpsi[sp] ~ dnorm(-2.4, sd=1)` — a species-level, size-blind, time-constant monthly logit-hazard (`psi_m <- ilogit(lpsi)`, gap-adjusted as `pst[t] <- 1-(1-psi_m)^g`). Every tagged juvenile matures at the same rate regardless of its actual TL at tagging/capture. BK asked (2026-09-14) for a design that replaces this with a hazard tied to size at tagging, ramping toward ~100% probability by the second growing season, using **the age-based, shared-K, release-anchored VBGF growth model** (`model/GIEL_VBGF_AgeLength.R`; `data/GIEL_VBGF_AgeLength.RData`; objects `al_final`/`samps_final`) as the authoritative growth source for this purpose. This choice was made explicitly, without first reconciling against the increment/Fabens model's own threshold curve (`model/GIEL_GrowthSeasonThreshold.R`) — the two models' smooth P(TL1 -> >=250mm after one growing season) curves diverge meaningfully (e.g. at TL1=150mm: 0.27 age-model vs. 0.49 increment-model; at TL1=249mm: 0.995 vs. 0.917; comparison computed in the 2026-09-14 conversation, not yet saved to a script). BK is separately gathering more growth-anchoring data before implementing any of this, so that reconciliation remains open.
+
+**Step 1 -- precompute an external maturation-hazard lookup table (offline, outside NIMBLE).** Using `al_final`'s posterior (`samps_final`: `Linf`, `logK[1]`, `sigma_v`, `sigma`), compute a hazard surface over a grid of TL bins (e.g. 10-20mm width spanning ~100-249mm) and elapsed months since tagging (`delta_t = 1..24`, i.e. up to two growing seasons):
+- For each TL bin's representative TL1 and each `delta_t`, project forward via the anchor-independent Fabens/VBGF identity `TL2 = Linf - (Linf - TL1) * exp(-K_i * delta_t/12)`, drawing a fresh individual/pond-year `K_i = exp(logK + N(0, sigma_v))` per posterior draw (the same marginalization used for the standalone smooth curve computed 2026-09-14), plus observation noise `sigma`.
+- `F(TLbin, delta_t) = P(TL2 >= 250)`, a cumulative-maturation-probability surface.
+- Convert to a discrete monthly hazard: `psi_lookup[TLbin, delta_t] = (F(delta_t) - F(delta_t - 1)) / (1 - F(delta_t - 1))`, with `F(0) = 0`.
+- Cap `delta_t` at 24; beyond that, treat maturation as certain (`psi_lookup` -> ~1).
+- Save as a new small, hand-inspectable artifact (e.g. `data/GIEL_MaturationHazard.RData` or `.csv`), in the same spirit as `BWDieOffEvents.csv`/`BWPondAreas.csv` -- an externally-derived, versioned input, **not** re-derived inside the NIMBLE fit itself. This lets BK regenerate the table independently once better growth-anchoring data exist, without touching the robust-design code.
+
+**Step 2 -- data-build changes (`model/BWRobustDesign_data.R`).**
+- Retain continuous `TL_entry` in the `Fish` table for GIEL juveniles (currently only the binary `stage0` is kept; `total_length` is used transiently around line ~161-165 and then dropped) and bin it into the same TL bins used in Step 1 (`TL_entry_bin`).
+- Fish with missing/imputed TL at entry (existing `stage0_imputed` flag -- e.g. `origin == 3` established fish never physically measured at entry) fall back to the **old** scalar `lpsi[sp]` pathway; do not fabricate a TL for these.
+- `make_rd_inputs()`'s history-collapsing step (which pools fish sharing identical `y`/`K`/`stobs`/`post`/`entry_t`/`end_t`/`origin`/`stage0`/`pond` to shrink ~2,900+ GIEL fish to a much smaller set of unique weighted rows) must add `TL_entry_bin` as an additional grouping key so collapsing still applies -- this is why TL is binned rather than kept fully continuous (a continuous per-fish covariate would break history-collapsing and force per-individual likelihood evaluation, a large performance cost).
+- Add `data/GIEL_MaturationHazard.RData` to the `BUILD_INFO` mtime staleness guard, matching the convention already used for other externally-maintained inputs.
+- This change is **GIEL-only** (species = 2 in the 7-pond joint model). XYTE's `lpsi[1]` in this same joint 2-stage model is untouched -- XYTE's primary model is the separate three-stage build, which already handles size-dependent growth via its own `a1`/`pLg` recruit-size split.
+
+**Step 3 -- NIMBLE changes (`model/BWRobustDesign_defs.R`).**
+- `rdPond()` (and the pooled per-history loop) gains fixed constants `psi_lookup` (TLbin x delta_t matrix) plus per-history `tlbin[i]` and `entry_t[i]`, used only when `sp[j] == GIEL` and the history's fish has a known (non-imputed) TL bin.
+- Retain one free scalar per species, `lpsi_adj[sp] ~ dnorm(0, sd = 1)`, as a logit-scale offset: `psi_i[t] = ilogit(logit(psi_lookup[tlbin[i], t - entry_t[i]]) + lpsi_adj[sp])` -- so the model can still shift the whole external schedule if robust-design contact/stage data disagree with the growth model's implied timing, without re-estimating its shape. A posterior near 0 would indicate the external schedule needs no correction.
+- Multi-month gap transitions (e.g. the 6-month Apr->Oct jump) currently use `pst[t] <- 1-(1-psi_m)^g` (a constant-hazard power); with a time-varying `psi_i[t]` this must become a cumulative product over the actual intervening months, `pst[t] <- 1 - prod_{k=1}^{g}(1 - psi_i[t0 + k])` -- the same kind of month-indexed generalization already used for the `dE`/`nEvt` die-off mechanism in this codebase, not a new pattern.
+- Fish with imputed/missing TL_entry, and all XYTE histories in this joint model, keep the existing `psi_m <- ilogit(lpsi[sp])` scalar path unchanged.
+- The untagged-pool annual maturation term `psiY[j,y]` (feeding `U`/`RecJ`, the never-tagged pool) is **not** changed by this plan -- there is no individual TL data for untagged fish, so it remains a constant species-level annual rate. This limits how far the improvement propagates: only the *tagged*-fish likelihood benefits from the size-tied schedule.
+
+**Step 4 -- validation plan (post-implementation, once BK is ready to build this).**
+- Confirm `N_tag >= known alive` still holds for every GIEL pond-month after the change.
+- Check the `lpsi_adj[GIEL]` posterior: near 0 supports the external schedule as-is; a large offset would indicate the growth model and the robust-design contact data disagree on maturation timing.
+- Compare model-implied age-at-maturation-by-TL-at-tagging against whatever direct stage-transition recaptures exist in the GIEL contact/stage data (expected to be sparse, similar to the 13 S + 10 L juvenile stage re-observations noted for XYTE at IP1 in the three-stage model; GIEL's own count has not yet been tabulated).
+- Sensitivity run using the growth model's 2.5%/97.5% posterior-quantile schedules instead of the mean schedule, to see how much survival/detection estimates move -- this tests how much the still-open choice between the two candidate growth-model curves (age-based vs. increment) would matter for the robust-design results, without first having to fully reconcile the two growth models.
+
+**Open risks flagged, not resolved, by this plan.**
+- The two growth models' threshold curves diverge meaningfully (see Motivation); BK chose to proceed with the age-based model for this design but is separately gathering more anchoring data before implementing any of the above, and reconciliation between the two curves remains an open item.
+- Bin width for `TL_entry_bin` trades resolution against history-collapsing performance; not yet chosen.
+- No GIEL-specific count of direct stage-transition recaptures has been tabulated to gauge how informative Step 4's validation check will actually be.
+
+---
+
 ## Chapman Validation Process
 
 Both `ChapmanValidation.qmd` (YCB) and `ChapmanValidationIP.qmd` (IPCA Pond 1) follow the same validation recipe, used to test whether the Chapman estimator + `recapr` bootstrap CI (see `Analysis Rules and Caveats` below) can recover a **known, fixed true N** from a subset of confirmed long-term survivors. To build a similar validation for a new location:
@@ -224,6 +384,7 @@ When a request touches one of the topics below, **read the corresponding markdow
 | 2019/2020 genetics report, microsatellite methods, AJ/DAN ephemeral ponds, early IPCA data | `documents/BackwaterFinalReport2020_Summary.md` |
 | Pierce et al. full citation or page range | `documents/PierceEtAl_ChapterAbundance_Summary.md` |
 | Sangnawakij et al. full citation or DOI | `documents/Sangnawakij_et_al_2026_Summary.md` |
+| Bayesian VBGM methodology, ageing-error/observation-vs-process-error separation, sex-specific growth, `Linf`/`k` identifiability issues, growth model improvement ideas for the GIEL growth-season threshold model | `documents/Chamberlin2025_GrayTriggerfishVBGM_Summary.md` |
 
 ---
 
@@ -256,6 +417,8 @@ When a request touches one of the topics below, **read the corresponding markdow
 | `documents/IPRenovationPlan2014_Summary.md` | Summary of the 2014 renovation plan. Explains the IPCA gap before 2017 stocking and the conversion to 100% well-water supply. |
 | `documents/Yuma BW summary of events.xlsx` | Reference spreadsheet of major management events at YCB 2013–2025: stockings (2013, 2014, 2015, 2020, 2025) and netting/harvest events with fish counts. See `YumaBW_SummaryOfEvents_Summary.md`. |
 | `documents/YumaBW_SummaryOfEvents_Summary.md` | Summary of `Yuma BW summary of events.xlsx`. Stocking and netting events at YCB with counts of tagged/untagged fish returned and harvested. |
+| `documents/bayesian-estimation-of-von-bertalanffy-growth-parameters-for-gray-triggerfish-balistes-capriscus-incorporating-multiple.pdf` | Chamberlin et al. (2025), *Can. J. Fish. Aquat. Sci.* 82:1-12. Bayesian hierarchical VBGM for gray triggerfish separating multi-reader ageing/observation error from growth process error, comparing 3 ageing protocols and testing sex-specific growth. See `Chamberlin2025_GrayTriggerfishVBGM_Summary.md`. |
+| `documents/Chamberlin2025_GrayTriggerfishVBGM_Summary.md` | Summary of the gray triggerfish VBGM paper above, with a section applying its findings to the GIEL growth-season threshold model: confirms our `Linf`/`K` non-identifiability is a generic, cited VBGF failure mode (Gwinn et al. 2010; Wilson et al. 2015) tied to lack of fish near the size asymptote (not to our lack of age data); supports reporting derived P(TL>=250mm) predictions rather than raw `Linf`/`K`; suggests testing sex as a covariate (76% of the growth-model fish are sexed, ~equal M/F split) as an untested, low-cost extension; and notes a possible future extension to separate measurement noise from process error, given the 11 flagged negative-growth records. |
 
 > **Marsh et al. (2024)** is the canonical reference for the OCH program context, sex-biased survival patterns, and Imperial Ponds history. Cite as: Marsh, P.C., T.E. Dowling, T.F. Turner, M.J. Osborne, and B.R. Kesner. 2024. Monographs of the Western North American Naturalist, Vol. 15, Article 1.
 
@@ -280,6 +443,7 @@ When a request touches one of the topics below, **read the corresponding markdow
 | `data/BWRobustDesign_data.RData` | NIMBLE inputs for the joint robust-design model (created by `model/BWRobustDesign_data.R`) |
 | `data/BWRobustDesign_MCMC.RData` | Posterior samples and diagnostics from `model/BWRobustDesign_NIMBLE.R` |
 | `data/GIEL_IP5_StockedOnlyBayesianSensitivity.RData` | Stocked-only Bayesian sensitivity check for IP5 GIEL (`annual_surv_stocked_wholeSeason`, `bpost_stocked`, summary tables); see `model/GIEL_ClassicCJS_RobustDesign_Annual_Summary.md` §7.1. Not produced by any script. |
+| `data/GIEL_GrowthSeasonThreshold.RData` | Side analysis: recapture pairs, growing-season exposure data, NIMBLE growth-increment fits, and derived P(TL >= 250mm after one growth season) for bonytail at IP2/IP5/IP6. Produced by `model/GIEL_GrowthSeasonThreshold.R`; see `GIEL Growth-to-250mm-Threshold Side Analysis` section above. |
 
 ---
 
