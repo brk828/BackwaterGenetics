@@ -22,6 +22,15 @@ load("data/ReportingData.RData")
 
 if (!exists("DIEOFF_FILE")) DIEOFF_FILE <- "data/BWDieOffEvents.csv"
 
+# GIEL size-tied maturation hazard track (2026-09-14; see AGENTS.md "GIEL
+# Size-Tied Maturation Hazard" and the plan file .posit/assistant/plans/
+# 2026-09-14-1444-giel-growth-model-tracks-feeding-robust-design-maturation-
+# hazard.md). One of "F1" (Fabens, IPCA-only), "F2" (Fabens, IPCA+Cibola),
+# "A1" (age-based VBGF, IPCA-only) -- built by model/GIEL_MaturationHazard_Build.R.
+if (!exists("MATURATION_TRACK")) MATURATION_TRACK <- "F1"
+stopifnot(MATURATION_TRACK %in% c("F1", "F2", "A1"))
+MATURATION_HAZARD_FILE <- paste0("data/GIEL_MaturationHazard_", MATURATION_TRACK, ".RData")
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -171,7 +180,7 @@ StageAtEntry <- Fish |>
     ),
     stage0_imputed = is.na(TL_use) & origin != 3L
   ) |>
-  select(PITIndex, location, stage0, stage0_imputed)
+  select(PITIndex, location, stage0, stage0_imputed, TL_entry = TL_use)
 
 Fish <- Fish |>
   left_join(StageAtEntry, by = c("PITIndex", "location")) |>
@@ -185,6 +194,37 @@ Fish <- Fish |>
   filter(!is.na(entry_t), end_t >= entry_t) |>
   arrange(pond, entry_t, PITIndex) |>
   mutate(fish = row_number())
+
+# ---------------------------------------------------------------------------
+# GIEL size-tied maturation hazard: TL bin at entry (2026-09-14). Only
+# GIEL juveniles (stage0 == 1) with a real (non-imputed) TL_entry get the
+# size-tied hazard; everyone else (XYTE, adults-at-entry, and GIEL juveniles
+# with imputed/missing TL) keeps the existing scalar lpsi[sp] pathway --
+# hasTL gates this in RD_constants/rd_code below. TL bin edges match the
+# 20mm, 100-249mm bins used by model/GIEL_MaturationHazard_Build.R for every
+# track, so a fixed table here is safe regardless of which track's hazard
+# file is loaded.
+GIEL_TLBIN_EDGES <- c(100, 120, 140, 160, 180, 200, 220, 240, 249)
+N_TLBIN_GIEL <- length(GIEL_TLBIN_EDGES) - 1
+
+Fish <- Fish |>
+  mutate(
+    hasTL = species == "GIEL" & stage0 == 1L & !stage0_imputed & !is.na(TL_entry),
+    TL_entry_clip = pmin(pmax(TL_entry, GIEL_TLBIN_EDGES[1]), GIEL_TLBIN_EDGES[N_TLBIN_GIEL + 1] - 1e-6),
+    TL_entry_bin = if_else(hasTL,
+                            findInterval(TL_entry_clip, GIEL_TLBIN_EDGES, all.inside = TRUE),
+                            1L)
+  ) |>
+  select(-TL_entry_clip)
+
+cat("\nGIEL size-tied maturation hazard: fish with known TL at entry (hasTL) by pond x bin:\n")
+print(Fish |> filter(hasTL) |>
+        mutate(bin_label = paste0("[", GIEL_TLBIN_EDGES[TL_entry_bin], ",",
+                                   GIEL_TLBIN_EDGES[TL_entry_bin + 1], ")")) |>
+        dplyr::count(pond, bin_label))
+cat("GIEL juveniles (stage0==1) WITHOUT usable TL (scalar-lpsi fallback):",
+    sum(Fish$species == "GIEL" & Fish$stage0 == 1L & !Fish$hasTL), "of",
+    sum(Fish$species == "GIEL" & Fish$stage0 == 1L), "\n")
 
 N_FISH <- nrow(Fish)
 
@@ -256,13 +296,13 @@ ContactFishWeeks <- StudyBWContacts |>
   mutate(t = prim_floor(Date), k = week_of_month(Date)) |>
   filter(!is.na(t)) |>
   distinct(pond, t, k, PITIndex) |>
-  count(pond, t, k, name = "n_fish")
+  dplyr::count(pond, t, k, name = "n_fish")
 
 KnownAliveMonth <- Fish |>
   select(pond, entry_t, end_t, MaxScanDate) |>
   cross_join(Primary |> select(t, month_start)) |>
   filter(entry_t <= t, end_t >= t, !is.na(MaxScanDate), MaxScanDate >= month_start) |>
-  count(pond, t, name = "known_alive")
+  dplyr::count(pond, t, name = "known_alive")
 
 WeekScreen <- expand_grid(pond = 1:7, t = 1:T_PRIM, k = 1:N_SEC) |>
   mutate(avail = eff_wk[cbind(pond, t, k)]) |>
@@ -326,7 +366,7 @@ Detections <- StudyBWContacts |>
   distinct(fish, t, k)
 
 y_mat <- matrix(0L, N_FISH, T_PRIM)
-det_counts <- Detections |> count(fish, t)
+det_counts <- Detections |> dplyr::count(fish, t)
 y_mat[cbind(det_counts$fish, det_counts$t)] <- det_counts$n
 
 # K: weeks available to fish i in month t (scanner running, fish at large)
@@ -533,6 +573,20 @@ Stocking <- Fish |>
             n_juv = sum(stage0 == 1L), n_adult = sum(stage0 == 2L), .groups = "drop")
 
 # ---------------------------------------------------------------------------
+# GIEL size-tied maturation hazard lookup table (psi_lookup), from whichever
+# track model/GIEL_MaturationHazard_Build.R was last run for (MATURATION_TRACK
+# above). 20mm TL bins x 24 months-since-entry, clipped away from exact 0/1.
+# ---------------------------------------------------------------------------
+MaturationHazard <- new.env()
+load(MATURATION_HAZARD_FILE, envir = MaturationHazard)
+stopifnot(identical(MaturationHazard$TL_BIN_EDGES, GIEL_TLBIN_EDGES))
+psi_lookup   <- MaturationHazard$psi_lookup       # N_TLBIN_GIEL x DELTA_T_MAX
+DELTA_T_MAX  <- MaturationHazard$DELTA_T_MAX
+cat("\nGIEL maturation hazard table loaded from", MATURATION_HAZARD_FILE,
+    "(track", MaturationHazard$TRACK, "):", nrow(psi_lookup), "TL bins x",
+    ncol(psi_lookup), "months\n")
+
+# ---------------------------------------------------------------------------
 # NIMBLE constants / data (fish contiguous within pond)
 # ---------------------------------------------------------------------------
 pond_off <- c(0L, cumsum(tabulate(Fish$pond, nbins = 7)))
@@ -551,7 +605,9 @@ RD_constants <- list(
   ev_pond = Netting$pond, ev_t = Netting$t_e, ev_season = Netting$season,
   ev_stage = Netting$stage, ev_n = Netting$n, ev_remU_before = Netting$remU_before,
   remU = remU_arr,
-  U_known = ifelse(PondTable$pond == 1, 0L, 1L)   # IP ponds start with no untagged fish
+  U_known = ifelse(PondTable$pond == 1, 0L, 1L),   # IP ponds start with no untagged fish
+  tlbin = Fish$TL_entry_bin, hasTL = as.integer(Fish$hasTL),
+  psi_lookup = psi_lookup, N_TLBIN = N_TLBIN_GIEL, DELTA_T_MAX = DELTA_T_MAX
 )
 
 RD_data <- list(
@@ -560,17 +616,20 @@ RD_data <- list(
 )
 
 BUILD_INFO_INPUTS <- c("model/BWRobustDesign_data.R", "data/ReportingData.RData",
-                       "data/BWNettingEvents.csv", DIEOFF_FILE)
+                       "data/BWNettingEvents.csv", DIEOFF_FILE, MATURATION_HAZARD_FILE)
 BUILD_INFO <- list(
   built = Sys.time(),
   inputs = BUILD_INFO_INPUTS,
   input_mtime = file.info(BUILD_INFO_INPUTS)$mtime,
-  DIEOFF_FILE = DIEOFF_FILE
+  DIEOFF_FILE = DIEOFF_FILE,
+  MATURATION_TRACK = MATURATION_TRACK,
+  MATURATION_HAZARD_FILE = MATURATION_HAZARD_FILE
 )
 
 save(Fish, Primary, PondTable, Netting, NettingCSV, Stocking, Removals, RemovedTagged,
      SameEventRemovals, SpeciesMismatch, LengthWeight, DroppedWeeks, DieOffsRaw, Evt, nEvt,
      y_mat, K_mat, stobs_mat, post_mat, eff_wk, eff_hrs, eff_std,
+     psi_lookup, GIEL_TLBIN_EDGES, N_TLBIN_GIEL, DELTA_T_MAX, MATURATION_TRACK,
      RD_constants, RD_data, BUILD_INFO,
      START_DATE, FIRST_FY, N_SEASONS, N_MOY, T_PRIM, N_SEC, POST_MONTHS, StageTL,
      prim_floor, fy_of_date, season_of_date,
@@ -580,11 +639,11 @@ save(Fish, Primary, PondTable, Netting, NettingCSV, Stocking, Removals, RemovedT
 # Reconciliation printout
 # ---------------------------------------------------------------------------
 cat("\nFish by pond / origin (1 stocked, 2 netting-tagged, 3 established) / stage at entry:\n")
-print(Fish |> count(pond, origin, stage0) |>
+print(Fish |> dplyr::count(pond, origin, stage0) |>
         pivot_wider(names_from = c(origin, stage0), values_from = n, values_fill = 0,
                     names_glue = "orig{origin}_stage{stage0}"))
 cat("\nRemoved tagged fish by pond and type:\n")
-print(Fish |> filter(removed) |> count(pond, rem_type))
+print(Fish |> filter(removed) |> dplyr::count(pond, rem_type))
 cat("\nSame-event tagged-and-removed fish (counted as untagged harvest):",
     nrow(SameEventRemovals), "\n")
 cat("\nNetting events:\n")
@@ -595,6 +654,7 @@ cat("\nDetection summary: fish-months with K>0:", sum(K_mat > 0),
     "; with y>0:", sum(y_mat > 0), "; stage observations:", sum(stobs_mat %in% 1:2),
     "; known-alive months (code 3):", sum(stobs_mat == 3L), "\n")
 cat("\nLength-weight fits:\n"); print(LengthWeight)
+cat("\nGIEL maturation hazard track:", MATURATION_TRACK, "(", MaturationHazard$track_desc, ")\n")
 cat("\nDie-off events:", nrow(DieOffsRaw), "record(s); event pond-months (Evt):", sum(Evt),
     "; event calendar-months by pond x season (nEvt):\n")
 print(DieOffsRaw |> select(Backwater, Species, StartMonth, EndMonth, Cause) |> as.data.frame())

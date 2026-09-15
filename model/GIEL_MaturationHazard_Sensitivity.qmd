@@ -1,0 +1,399 @@
+---
+title: "Bonytail (GIEL) Size-Tied Maturation Hazard — Growth-Track Sensitivity"
+subtitle: "Comparing Fabens-increment (F1, F2), age-based VBGF (A1), and the baseline scalar-lpsi joint robust-design fits"
+author: "Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(coda)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+theme_set(theme_bw(base_size = 12))
+
+apply_table_style <- function(kbl_obj, header_above = NULL) {
+  if (!knitr::is_html_output()) return(kbl_obj)
+  out <- kableExtra::kable_styling(kbl_obj, bootstrap_options = c("striped", "hover", "condensed"),
+                                     full_width = FALSE)
+  if (!is.null(header_above)) out <- kableExtra::add_header_above(out, header_above)
+  out
+}
+
+# Fit files (GIEL-only joint robust-design model, RUN_PONDS = c(3, 6, 7);
+# pond_new 1 = IP2, 2 = IP5, 3 = IP6)
+FIT_FILES <- c(F1 = "../data/BWRobustDesign_MCMC_giel_F1.RData",
+               F2 = "../data/BWRobustDesign_MCMC_giel_F2.RData",
+               A1 = "../data/BWRobustDesign_MCMC_giel_A1.RData")
+BASELINE_FILE <- "../data/BWRobustDesign_MCMC_giel.RData"
+HAZARD_FILES <- c(F1 = "../data/GIEL_MaturationHazard_F1.RData",
+                   F2 = "../data/GIEL_MaturationHazard_F2.RData",
+                   A1 = "../data/GIEL_MaturationHazard_A1.RData")
+
+POND_LABELS <- c("IP2", "IP5", "IP6")   # pond_new 1:3
+N_MOY <- 7L
+FIRST_FY <- 2017L
+
+TRACK_DESC <- c(
+  F1 = "Fabens increment, IPCA-only",
+  F2 = "Fabens increment, IPCA + Cibola",
+  A1 = "Age-based VBGF (shared-K, release-anchored), IPCA-only"
+)
+
+load_env <- function(path) { e <- new.env(); load(path, envir = e); e }
+
+envs <- lapply(FIT_FILES, load_env)
+env_base <- load_env(BASELINE_FILE)
+hazard_envs <- lapply(HAZARD_FILES, load_env)
+```
+
+## Background
+
+This report compares three sensitivity fits of the joint two-stage robust-design
+model for bonytail (GIEL) at the three IPCA ponds (IP2, IP5, IP6), each using a
+different growth-model-derived **size-tied juvenile-to-adult maturation
+hazard** in place of the model's original single scalar `lpsi[GIEL]` (a
+species-level, size-blind, time-constant monthly logit-hazard), against that
+original **baseline** fit. The three tracks differ only in which growth model
+supplied the hazard lookup table (`psi_lookup`, 8 TL bins x 24 months);
+everything else about the joint model and data build is identical across the
+four fits.
+
+| Track | Growth-model source | Fit file |
+|---|---|---|
+| F1 | `r TRACK_DESC["F1"]` | `data/BWRobustDesign_MCMC_giel_F1.RData` |
+| F2 | `r TRACK_DESC["F2"]` | `data/BWRobustDesign_MCMC_giel_F2.RData` |
+| A1 | `r TRACK_DESC["A1"]` | `data/BWRobustDesign_MCMC_giel_A1.RData` |
+| baseline | scalar `lpsi[GIEL]`, no hazard table | `data/BWRobustDesign_MCMC_giel.RData` |
+
+All four fits use the same joint model structure (3 chains, 30k iterations /
+10k burn-in / thin 10) and the same underlying `Fish`/contact data; see
+`AGENTS.md`'s "GIEL Size-Tied Maturation Hazard" section for the full design
+rationale and implementation notes, and `model/GIEL_MaturationHazard_Build.R`
+for how each track's `psi_lookup` table was derived from its source growth
+model's posterior.
+
+## 1. The three hazard schedules
+
+Each track converts posterior growth-model draws into a monthly maturation
+hazard for a juvenile bonytail as a function of its TL bin at tagging/capture
+and months elapsed since then. The panels below show, for each track, (a) the
+monthly hazard curve for three representative TL bins, and (b) the cumulative
+probability of having reached 250 mm TL after 6 months (one Apr–Sep growing
+season) as a function of starting TL bin — the version of this curve that is
+actually discretized into the joint model's `psi_lookup`, not the smoother
+continuous-TL curves reported elsewhere for these growth models.
+
+```{r hazard-curves, fig.height=8}
+hazard_long <- imap_dfr(hazard_envs, function(e, nm) {
+  psi <- e$psi_lookup
+  as_tibble(psi, rownames = "TL_bin") |>
+    mutate(bin_mid = e$TL_bin_mid, track = nm) |>
+    pivot_longer(starts_with("m"), names_to = "delta_t", values_to = "hazard") |>
+    mutate(delta_t = as.integer(gsub("m", "", delta_t)))
+})
+
+# 3 representative bins: low, mid, high
+rep_bins <- hazard_envs[[1]]$TL_bin_label[c(1, 4, 8)]
+
+p_hazard <- hazard_long |>
+  filter(TL_bin %in% rep_bins) |>
+  ggplot(aes(x = delta_t, y = hazard, color = TL_bin)) +
+  geom_line() +
+  facet_wrap(~track, ncol = 3) +
+  labs(x = "Months since tagging/capture", y = "Monthly maturation hazard",
+       color = "TL bin (mm)",
+       title = "Monthly hazard by track and starting size bin")
+
+f_at_6mo <- imap_dfr(hazard_envs, function(e, nm) {
+  tibble(track = nm, bin_mid = e$TL_bin_mid, F_6mo = e$F_mat[, 6])
+})
+
+p_curve <- f_at_6mo |>
+  ggplot(aes(x = bin_mid, y = F_6mo, color = track)) +
+  geom_line() + geom_point() +
+  labs(x = "TL at tagging/capture (mm, bin midpoint)",
+       y = "P(TL >= 250mm after 6 months)",
+       title = "Cumulative probability of reaching 250mm after one growing season")
+
+p_hazard / p_curve
+```
+
+The three tracks disagree most at small starting sizes and converge as TL
+approaches the 250 mm threshold — the same divergence already documented for
+each growth model's own smooth threshold curve (`AGENTS.md`, "GIEL Size-Tied
+Maturation Hazard" section): F1 (Fabens, IPCA-only) predicts the slowest
+maturation for small fish, F2 (Fabens, IPCA + Cibola) and A1 (age-based VBGF)
+predict progressively faster maturation at low TL.
+
+## 2. Known-alive constraint (`N_tag >= known alive`)
+
+For every pond x month with at least one fish known alive (tagged, not yet
+removed, and either scanned in that window or known alive from a later
+contact), the posterior 2.5% quantile of tagged abundance
+(`sum(N_tag[pond, t, 1:2])`, juvenile + adult) must be at or above the
+directly-counted known-alive total.
+
+```{r known-alive-check}
+known_alive_check <- function(env) {
+  Fish <- env$rd_Fish
+  samp <- as.matrix(env$rd_samples)
+  T_PRIM <- max(Fish$end_t, na.rm = TRUE)
+  ntag_cols <- grep("^N_tag\\[", colnames(samp), value = TRUE)
+  idx <- do.call(rbind, lapply(strsplit(gsub("N_tag\\[|\\]", "", ntag_cols), ", "),
+                                function(x) as.integer(x)))
+  colnames(idx) <- c("pond", "t", "stage")
+  df_idx <- as_tibble(idx) |> mutate(col = ntag_cols)
+
+  n_checked <- 0L
+  violations <- tibble()
+  for (j in 1:3) {
+    for (t in 1:T_PRIM) {
+      known_alive <- Fish |>
+        filter(pond_new == j, entry_t <= t, end_t >= t,
+               last_alive_t >= t, count_from <= t) |>
+        nrow()
+      if (known_alive == 0) next
+      n_checked <- n_checked + 1L
+      cols <- df_idx |> filter(pond == j, t == !!t) |> pull(col)
+      if (length(cols) == 0) next
+      post_sum <- rowSums(samp[, cols, drop = FALSE])
+      q025 <- quantile(post_sum, 0.025)
+      if (q025 < known_alive) {
+        violations <- bind_rows(violations,
+                                 tibble(pond = j, t = t, known_alive = known_alive,
+                                        post_q025 = q025, post_mean = mean(post_sum)))
+      }
+    }
+  }
+  list(n_checked = n_checked, violations = violations)
+}
+
+ka_results <- lapply(envs, known_alive_check)
+
+ka_table <- imap_dfr(ka_results, function(r, nm) {
+  tibble(Track = nm, `Pond-months checked` = r$n_checked, Violations = nrow(r$violations))
+})
+kable(ka_table, caption = "Known-alive constraint: pond-months checked vs. violations") |>
+  apply_table_style()
+```
+
+All three tracks pass with zero violations.
+
+## 3. Convergence
+
+Excluding the chronically-poor-mixing nuisance families (`N_tag`, `Tal`, `U`,
+`U0`, `RecJ`, `r`, `Atot` — recruitment/pool quantities documented throughout
+`AGENTS.md` as mixing poorly in essentially every GIEL/XYTE fit in this
+project regardless of any other model change), the remaining core
+hyperparameters (survival, detection, maturation, offsets, hyper-priors)
+converge acceptably in all three tracks.
+
+```{r convergence}
+NUISANCE_FAMILIES <- c("N_tag", "Tal", "U", "U0", "RecJ", "r", "Atot")
+
+convergence_summary <- function(env) {
+  rhat <- env$rhat_all[, "Point est."]
+  fam <- gsub("\\[.*", "", names(rhat))
+  core <- rhat[!fam %in% NUISANCE_FAMILIES]
+  nuis <- rhat[fam %in% NUISANCE_FAMILIES]
+  tibble(n_core = length(core), max_rhat_core = max(core, na.rm = TRUE),
+         n_core_over_1.1 = sum(core > 1.1, na.rm = TRUE),
+         n_nuisance = length(nuis), max_rhat_nuisance = max(nuis, na.rm = TRUE),
+         n_nuisance_over_1.1 = sum(nuis > 1.1, na.rm = TRUE))
+}
+
+conv_table <- imap_dfr(envs, ~ mutate(convergence_summary(.x), Track = .y, .before = 1))
+kable(conv_table, digits = 3,
+      col.names = c("Track", "n core", "Max Rhat (core)", "Core n > 1.1",
+                    "n nuisance", "Max Rhat (nuisance)", "Nuisance n > 1.1"),
+      caption = "Convergence by parameter family") |>
+  apply_table_style()
+```
+
+Worst core-parameter Rhats are among `lphiA[·,·]` (season-adult-survival) and
+`dE[·]` cells, all at or below ~1.05 — consistent with, and no worse than,
+prior GIEL fits in this project. The elevated nuisance-family Rhats are the
+same floating-point/mixing artifact documented throughout `AGENTS.md` for
+`N_tag`/`Tal` (pinned by the known-alive constraint, so within-chain SD is
+near zero and Rhat is not meaningful) and for recruitment nuisance
+parameters, not problems introduced by the hazard mechanism.
+
+## 4. `lpsi_adj[GIEL]` plausibility
+
+`lpsi_adj[1]` is the logit-scale correction the model applies on top of each
+track's raw growth-model-derived hazard lookup table. A value near 0 means
+the robust-design contact/stage data agree with that track's schedule as-is;
+a positive value means the data want **faster** maturation than the schedule
+predicts, a negative value **slower**.
+
+```{r lpsi-adj}
+lpsi_adj_table <- imap_dfr(envs, function(e, nm) {
+  s <- e$rd_summary
+  if (!"lpsi_adj[1]" %in% rownames(s)) return(tibble())
+  tibble(Track = nm, mean = s["lpsi_adj[1]", "mean"],
+         lo = s["lpsi_adj[1]", "2.5%"], hi = s["lpsi_adj[1]", "97.5%"])
+})
+kable(lpsi_adj_table, digits = 3,
+      col.names = c("Track", "Mean", "2.5%", "97.5%"),
+      caption = "lpsi_adj[GIEL] posterior by track") |>
+  apply_table_style()
+```
+
+All three are credibly nonzero (no CI includes 0), and the *direction*
+differs by track: F1's positive offset means the contact data want
+maturation faster than the Fabens-IPCA-only schedule predicts — consistent
+with F1 giving the *slowest* raw schedule of the three (Section 1). F2 and
+A1's negative offsets, of similar magnitude to each other, mean their faster
+raw schedules need to be slowed down to match the data. This is a genuine
+difference between tracks that mirrors the underlying divergence between the
+Fabens-increment and age-based VBGF growth-model curves, not measurement
+noise.
+
+## 5. Core hyperparameter comparison
+
+```{r core-hyperparameters}
+CORE_PARS <- c("mu_phi[1]", "sigma_phi[1]", "dJ[1]",
+               "dE[1]", "dE[2]", "dE[3]",
+               "lpsi[1]", "lpsi_adj[1]",
+               "lp[1, 1]", "lp[2, 1]", "lp[3, 1]",
+               "lp[1, 2]", "lp[2, 2]", "lp[3, 2]",
+               "g_eff[1]")
+
+fmt_ci <- function(m, lo, hi) sprintf("%.3f (%.3f, %.3f)", m, lo, hi)
+
+core_table <- imap_dfr(envs, function(e, nm) {
+  s <- e$rd_summary
+  pars <- intersect(CORE_PARS, rownames(s))
+  tibble(param = pars, track = nm,
+         val = fmt_ci(s[pars, "mean"], s[pars, "2.5%"], s[pars, "97.5%"]))
+})
+base_pars <- intersect(setdiff(CORE_PARS, "lpsi_adj[1]"), rownames(env_base$rd_summary))
+core_table_base <- tibble(
+  param = base_pars, track = "baseline",
+  val = fmt_ci(env_base$rd_summary[base_pars, "mean"],
+               env_base$rd_summary[base_pars, "2.5%"],
+               env_base$rd_summary[base_pars, "97.5%"]))
+
+core_wide <- bind_rows(core_table, core_table_base) |>
+  pivot_wider(names_from = track, values_from = val) |>
+  select(param, F1, F2, A1, baseline) |>
+  arrange(match(param, CORE_PARS))
+
+kable(core_wide, caption = "Core hyperparameters: mean (95% CI), F1 / F2 / A1 / baseline") |>
+  apply_table_style()
+```
+
+Survival hyperparameters (`mu_phi`, `sigma_phi`, `dE[1:3]`) are essentially
+identical across all three hazard tracks and the baseline (differences well
+under 0.1 logit) — the size-tied maturation submodel is largely separable
+from survival/die-off estimation, matching the pattern already documented
+for the XYTE `a1` size-split submodel. The real movement is concentrated in
+`lpsi` (the untagged-pool annual maturation rate, which loses information as
+the tagged-fish pathway becomes size-tied) and juvenile detection
+(`lp[·, 1]`), both of which shift modestly and roughly monotonically from F1
+-> F2 -> A1 as the underlying schedule's implied maturation speed increases.
+`dJ[1]` (juvenile-vs-adult survival offset) also drifts down from F1 to A1 as
+more juvenile time gets reallocated by the faster schedules, but stays
+positive in all three fits (juvenile survival modeled above adult on the
+logit scale in every GIEL fit to date) — a separately-investigated,
+IP2-detection-asymmetry-linked finding (see `AGENTS.md`), not an artifact of
+this sensitivity sweep.
+
+## 6. FY2022 (IP2) / FY2020 (IP5) event-adjusted realized annual survival
+
+Both confirmed die-off events (IP2, Jan–Jul 2022, 7 of 12 FY2022 months
+flagged; IP5, Jan–Sep 2020, 9 of 12 FY2020 months flagged; see
+`data/BWDieOffEvents.csv` and `AGENTS.md`) are handled by a per-pond fixed
+survival-reducing offset `dE[pond]` applied only in the flagged months, on
+top of that pond-season's baseline `lphiA`. Realized annual survival over the
+event season is therefore `plogis(lphiA)^(12 - nEvt) * plogis(lphiA + dE)^nEvt`.
+
+```{r event-survival}
+event_windows <- tibble(
+  pond_label = c("IP2", "IP5"),
+  pond = c(1L, 2L),        # pond_new index
+  season = c(6L, 4L),      # FY2022, FY2020
+  nEvt = c(7L, 9L)
+)
+
+realized_survival <- function(env, ew) {
+  post <- as.matrix(env$rd_samples)
+  pmap_dfr(ew, function(pond_label, pond, season, nEvt) {
+    lphiA_col <- sprintf("lphiA[%d, %d]", pond, season)
+    dE_col <- sprintf("dE[%d]", pond)
+    if (!lphiA_col %in% colnames(post) || !dE_col %in% colnames(post)) return(tibble())
+    lphiA <- post[, lphiA_col]; dE <- post[, dE_col]
+    surv <- plogis(lphiA)^(12 - nEvt) * plogis(lphiA + dE)^nEvt
+    no_adj <- plogis(lphiA)^12
+    tibble(pond_label = pond_label, season = season, nEvt = nEvt,
+           mean = mean(surv), lo = quantile(surv, 0.025), hi = quantile(surv, 0.975),
+           no_adjustment_mean = mean(no_adj))
+  })
+}
+
+event_table <- imap_dfr(envs, function(e, nm) {
+  mutate(realized_survival(e, event_windows), track = nm, .before = 1)
+})
+
+event_display <- event_table |>
+  mutate(FY = if_else(pond_label == "IP2", 2022L, 2020L),
+         `Event-adjusted (mean, 95% CI)` = fmt_ci(mean, lo, hi),
+         `No-event-adjustment comparison` = round(no_adjustment_mean, 3)) |>
+  select(Track = track, Pond = pond_label, FY, `Event-adjusted (mean, 95% CI)`,
+         `No-event-adjustment comparison`)
+
+kable(event_display, caption = "Event-adjusted realized annual survival by track") |>
+  apply_table_style()
+```
+
+```{r event-survival-plot, fig.height=3.5}
+event_table |>
+  mutate(FY = if_else(pond_label == "IP2", "IP2, FY2022", "IP5, FY2020")) |>
+  ggplot(aes(x = track, y = mean, ymin = lo, ymax = hi)) +
+  geom_pointrange() +
+  facet_wrap(~FY, scales = "free_y") +
+  labs(x = "Track", y = "Event-adjusted realized annual survival",
+       title = "Event-adjusted survival is stable across maturation-hazard tracks")
+```
+
+All three tracks give essentially the same event-adjusted realized survival
+for both die-off seasons — confirming that the maturation-hazard track
+choice does not materially affect the die-off (`dE`) estimates or their
+downstream realized-survival implications, consistent with Section 5's
+finding that the tracks differ mainly in maturation-timing quantities, not
+survival.
+
+## 7. Conclusion
+
+All three growth-track sensitivity fits (F1, F2, A1) pass the known-alive
+constraint with zero violations and converge acceptably (core-parameter Rhat
+at or below ~1.05 in every fit). Survival and die-off estimates are robust to
+the choice of maturation-hazard track — the size-tied maturation submodel is
+largely separable from the rest of the joint model, mirroring the pattern
+already seen for XYTE's density-dependent size-split submodel.
+
+The substantive difference between tracks is the sign and magnitude of
+`lpsi_adj[GIEL]`: F1 (the slowest raw schedule) is corrected faster by the
+data, while F2 and A1 (faster raw schedules) are corrected slower by a
+similar amount. This reflects the same underlying divergence between the
+Fabens-increment and age-based VBGF growth-model curves already flagged as an
+open reconciliation item in `AGENTS.md` and the design plan file. No track is
+disqualified by this comparison; choosing among them, reconciling the two
+growth models directly, or reporting all three as a sensitivity range on
+maturation timing remains a modeling decision for BK. Because survival
+estimates are unaffected by this choice, that decision can be made
+independently of any of the survival/die-off conclusions already reported
+elsewhere for this model.

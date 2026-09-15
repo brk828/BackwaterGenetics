@@ -11,7 +11,7 @@
 
 Two earlier fits are archived for comparison: the original `t0`-formulation fit
 (`data/GIEL_VBGF_AgeLength_t0.RData`) and the `L0`-anchored, hatch-age,
-origin-differentiated fit (`data/GIEL_VBGF_AgeLength_originDiff.RData`).
+origin-differentiated fit (`data/GIEL_VBGF_AgeLength_originDiff.RData`)./
 
 ## Motivation
 
@@ -301,3 +301,49 @@ calendar time fixed as well as size.
 8. **The IP5 natural-experiment test (n=143, one pond-year) is thin evidence on its own**;
    the full-dataset origin-check WAIC tie is the stronger piece of evidence for "no origin
    effect," but both point the same direction.
+
+## P(TL >= 250mm after one growth season | TL1) -- "Track A1" (2026-09-14)
+
+Added as part of the 3-track growth-model sensitivity plan feeding the joint robust-design
+model's maturation hazard (see `AGENTS.md` "GIEL Size-Tied Maturation Hazard" and the plan
+file `.posit/assistant/plans/2026-09-14-1444-giel-growth-model-tracks-feeding-robust-design-
+maturation-hazard.md`). This age-based model (IPCA-only, no Cibola data) is referred to as
+**Track A1**, alongside the two increment (Fabens) tracks: **F1** (IPCA-only,
+`GIEL_GrowthSeasonThreshold.R`) and **F2** (IPCA + Cibola, `GIEL_GrowthSeasonThreshold_withCibola.R`).
+
+Computed using the same Fabens-renewal projection as the increment tracks (valid because a
+fitted exponential VBGF is memoryless in `Linf`/`K` -- a one-season projection from a given
+`TL1` does not depend on how that `TL1` was reached), drawing `(Linf, logK[1], sigma_v,
+sigma)` from the primary shared-K fit's posterior (`samps_final`) and projecting
+`TL2 = Linf - (Linf - TL1) * exp(-K_i * 182/365) + eps` on the same `TL1_grid = c(150, 175,
+200, 225, 249)` used by tracks F1/F2:
+
+| TL1 (mm) | Expected increment (mm) | P(TL2 >= 250mm) |
+|---|---|---|
+| 150 | 85.2 | 0.268 |
+| 175 | 76.8 | 0.521 |
+| 200 | 68.5 | 0.788 |
+| 225 | 60.2 | 0.951 |
+| 249 | 52.2 | 0.995 |
+
+Posterior: `Linf` = 406.1 mm (sd 5.3), `K` = 0.825/yr (sd 0.24, including pond-year noise).
+
+**This curve sits well below both Fabens tracks at low TL1** (F1: 0.491 at 150mm, 0.917 at
+249mm; F2: 0.643 at 150mm, 0.985 at 249mm) -- Track A1 says a 150mm fish has roughly a 1-in-4
+chance of crossing 250mm in one growth season, vs. roughly a 1-in-2 (F1) or 2-in-3 (F2) chance
+under the increment models. This matches the divergence flagged ad hoc in `AGENTS.md`'s
+maturation-hazard design section (there estimated as "0.27 age-model vs. 0.49
+increment-model" at TL1=150mm) -- now computed and saved properly rather than left as an
+unsaved conversational estimate.
+
+**Caveat specific to this derived quantity:** `sigma` (17.0 mm) was estimated from *absolute*
+age-length residuals spanning ages up to ~10 years, not from short (182-day) increment
+residuals directly -- applying it to a one-season projection is an approximation, likely
+**conservative** (i.e., too wide, understating precision) relative to a residual sd fit
+directly on short-interval increments. Combined with the already-standing caveat that this
+model's `Linf` sits below the observed maximum TL (442mm) and should be read as a fitted
+compromise rather than a literal asymptote, Track A1's curve should be treated as one point in
+a sensitivity comparison, not a preferred estimate over the Fabens tracks.
+
+Saved to `data/GIEL_VBGF_AgeLength.RData`: `growth_season_threshold_probs_A1`,
+`GROWTH_SEASON_DAYS_A1`, `TL1_grid`.

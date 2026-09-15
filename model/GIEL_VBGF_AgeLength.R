@@ -469,7 +469,73 @@ print(al_origin_check_summary)
 cat("\nP(logK[StockedCohort] < logK[AssumedRecruit]):",
     mean(samps_origin_check[, "logK[1]"] < samps_origin_check[, "logK[2]"]), "\n")
 
-## ---- 5. Save results -------------------------------------------------------
+## ---- 5. Derive P(TL >= 250mm after one growth season | TL1) [Track A1] ----
+##
+## Added 2026-09-14 as part of the 3-track growth-model sensitivity plan
+## (see AGENTS.md "GIEL Size-Tied Maturation Hazard" and the plan file
+## .posit/assistant/plans/2026-09-14-1444-giel-growth-model-tracks-feeding-
+## robust-design-maturation-hazard.md). Track A1 = this age-based VBGF model,
+## IPCA-only. Uses the SAME Fabens-renewal projection and the SAME TL1 grid
+## as the two increment (Fabens) tracks (GIEL_GrowthSeasonThreshold.R /
+## _withCibola.R), exploiting the fact that a fitted exponential VBGF
+## (parameterized by Linf/K alone) is memoryless: TL(t+dt) depends only on
+## TL(t), Linf, and K, not on how TL(t) itself was reached (age-anchored vs.
+## release-anchored). This makes the primary (shared-K) fit's posterior
+## directly comparable to the two increment-model tracks despite the very
+## different data/likelihood used to estimate Linf/K.
+##
+## CAVEAT: sigma here (residual sd = 17.0 mm) was estimated from ABSOLUTE
+## age-length residuals spanning ages up to ~10 years, not from one-season
+## (182-day) increment residuals specifically. Applying it to a short
+## one-season projection is an approximation and is likely CONSERVATIVE
+## (too wide) relative to a residual sd estimated from short-interval
+## increments alone -- carry this caveat forward wherever this curve is
+## cited (see GIEL_VBGF_AgeLength_Summary.md).
+
+GROWTH_SEASON_DAYS_A1 <- 182  # Apr 1 - Sep 30, same convention as the increment tracks
+t_years_pred_A1 <- GROWTH_SEASON_DAYS_A1 / 365
+
+Linf_A1 <- samps_final[, "Linf"]
+logK_A1 <- samps_final[, "logK[1]"]
+sigma_A1 <- samps_final[, "sigma"]
+sigma_v_A1 <- samps_final[, "sigma_v"]
+
+set.seed(7402)
+n_draws_A1 <- length(Linf_A1)
+v_new_A1 <- rnorm(n_draws_A1, 0, sigma_v_A1)
+K_draw_A1 <- exp(logK_A1 + v_new_A1)
+eps_A1 <- rnorm(n_draws_A1, 0, sigma_A1)
+
+TL1_grid <- c(150, 175, 200, 225, 249)  # same grid used by the increment tracks
+prob_A1 <- sapply(TL1_grid, function(tl1) {
+  increment_i <- (Linf_A1 - tl1) * (1 - exp(-K_draw_A1 * t_years_pred_A1))
+  TL2_i <- tl1 + increment_i + eps_A1
+  mean(TL2_i >= 250)
+})
+expected_increment_A1 <- sapply(TL1_grid, function(tl1) {
+  mean((Linf_A1 - tl1) * (1 - exp(-K_draw_A1 * t_years_pred_A1)))
+})
+
+growth_season_threshold_probs_A1 <- data.frame(
+  TL1 = TL1_grid,
+  Expected_increment_mm = round(expected_increment_A1, 1),
+  P_cross_250_one_growth_season = round(prob_A1, 3)
+)
+
+cat("\nTrack A1 -- P(TL >= 250mm after one Apr-Sep growth season | TL1), age-based VBGF model:\n")
+print(growth_season_threshold_probs_A1)
+
+cat("\nPosterior: Linf =", round(mean(Linf_A1), 1), "mm (sd", round(sd(Linf_A1), 1),
+    "), K =", round(mean(K_draw_A1), 3), "/yr (sd", round(sd(K_draw_A1), 3), ")\n")
+
+cat("\nCAVEAT: sigma above (", round(mean(sigma_A1), 1), "mm) was fit on absolute age-length",
+    "\nresiduals spanning ages up to ~10 yr, not one-season increments specifically -- likely",
+    "\nconservative (too wide) for this derived one-season quantity. Linf itself sits below the",
+    "\nobserved max TL in this dataset (442 mm; see header RESULT note) -- treat Linf/K as a",
+    "\nfitted compromise for interpolation, not a literal asymptote, matching the standing",
+    "\ncaveat already in place for the increment (Fabens) model.\n")
+
+## ---- 6. Save results -------------------------------------------------------
 
 save(
   known_yc, recruit_candidates, MixtureClassificationLog, AssumedYOY,
@@ -478,5 +544,6 @@ save(
   al_param_summary, al_v_summary,
   al_origin_check_final, al_origin_check_summary,
   LINF_PRIOR_MEAN, LINF_PRIOR_SD, LOGK_PRIOR_MEAN, LOGK_PRIOR_SD, L0_PRIOR_MEAN, L0_PRIOR_SD,
+  growth_season_threshold_probs_A1, GROWTH_SEASON_DAYS_A1, TL1_grid,
   file = "data/GIEL_VBGF_AgeLength.RData"
 )

@@ -1210,6 +1210,104 @@ Mark-recapture estimates for Bonytail at IPCA ponds are available for fewer cens
 
 
 
+#### Joint Robust-Design Survival Model
+
+```{r ip-giel-robustdesign}
+#| label: ip-giel-robustdesign
+#| include: false
+giel_rd_file <- "data/BWRobustDesign_MCMC_giel_F1_sharedLp.RData"
+giel_rd_base_file <- "data/BWRobustDesign_MCMC_giel_F1.RData"
+run_giel_rd <- file.exists(giel_rd_file) && file.exists(giel_rd_base_file)
+if (run_giel_rd) {
+  giel_rd_env <- new.env()
+  load(giel_rd_file, envir = giel_rd_env)
+  giel_rd_base_env <- new.env()
+  load(giel_rd_base_file, envir = giel_rd_base_env)
+
+  giel_dJ_shared <- giel_rd_env$rd_summary["dJ[1]", ]
+  giel_dJ_base   <- giel_rd_base_env$rd_summary["dJ[1]", ]
+
+  giel_dE_tab <- as.data.frame(giel_rd_env$rd_summary[c("dE[1]", "dE[2]", "dE[3]"),
+                                                       c("mean", "2.5%", "97.5%")])
+  rownames(giel_dE_tab) <- c("IP2", "IP5", "IP6")
+  giel_dE_tab <- giel_dE_tab |>
+    tibble::rownames_to_column("Pond") |>
+    mutate(across(where(is.numeric), ~round(., 2))) |>
+    rename(`Logit offset` = mean, `2.5% CI` = `2.5%`, `97.5% CI` = `97.5%`)
+
+  giel_rd_mat <- as.matrix(do.call(rbind, giel_rd_env$rd_samples))
+  annual_event_surv <- function(pond, season, nevt, ntot = 12) {
+    lphiA <- giel_rd_mat[, paste0("lphiA[", pond, ", ", season, "]")]
+    dE    <- giel_rd_mat[, paste0("dE[", pond, "]")]
+    base_rate <- plogis(lphiA)
+    evt_rate  <- plogis(lphiA + dE)
+    surv <- base_rate^(ntot - nevt) * evt_rate^nevt
+    c(mean = mean(surv), lower = unname(quantile(surv, 0.025)),
+      upper = unname(quantile(surv, 0.975)))
+  }
+  # IP2 = pond_new 1, FY2022 = season 6, 7 of 12 months in the event window
+  # IP5 = pond_new 2, FY2020 = season 4, 9 of 12 months in the event window
+  ip2_fy2022_surv <- annual_event_surv(1, 6, 7)
+  ip5_fy2020_surv <- annual_event_surv(2, 4, 9)
+
+  dE_row <- function(pond) giel_dE_tab[giel_dE_tab$Pond == pond, ]
+  ip2_dE <- dE_row("IP2")
+  ip5_dE <- dE_row("IP5")
+
+  giel_narrative_dE <- paste0(
+    "At IP2, the model-estimated die-off survival offset was ",
+    ip2_dE$`Logit offset`, " (95% CI ", ip2_dE$`2.5% CI`, " to ", ip2_dE$`97.5% CI`,
+    " logit units), and at IP5 it was ", ip5_dE$`Logit offset`,
+    " (95% CI ", ip5_dE$`2.5% CI`, " to ", ip5_dE$`97.5% CI`,
+    ") -- both clearly negative, confirming a real survival reduction during ",
+    "these windows. The resulting event-adjusted realized annual adult survival was ",
+    scales::percent(ip2_fy2022_surv["mean"], accuracy = 1), " (95% CI ",
+    scales::percent(ip2_fy2022_surv["lower"], accuracy = 1), "-",
+    scales::percent(ip2_fy2022_surv["upper"], accuracy = 1), ") for IP2 in FY2022, and ",
+    scales::percent(ip5_fy2020_surv["mean"], accuracy = 1), " (95% CI ",
+    scales::percent(ip5_fy2020_surv["lower"], accuracy = 1), "-",
+    scales::percent(ip5_fy2020_surv["upper"], accuracy = 1), ") for IP5 in FY2020 -- ",
+    "consistent with the near-total known-survivor losses documented at both ponds ",
+    "during these events."
+  )
+
+  giel_narrative_dJ <- paste0(
+    "This adjustment produced a real reduction in the juvenile-versus-adult survival ",
+    "offset: from ", round(giel_dJ_base["mean"], 2), " (95% CI ",
+    round(giel_dJ_base["2.5%"], 2), " to ", round(giel_dJ_base["97.5%"], 2),
+    ") on the logit scale before the fix, to ", round(giel_dJ_shared["mean"], 2),
+    " (95% CI ", round(giel_dJ_shared["2.5%"], 2), " to ",
+    round(giel_dJ_shared["97.5%"], 2), ") after sharing IP2's juvenile and adult ",
+    "detection rates -- equivalent to a drop in the estimated juvenile-to-adult ",
+    "survival odds ratio from about ", round(exp(giel_dJ_base["mean"]), 2), "x to about ",
+    round(exp(giel_dJ_shared["mean"]), 2), "x. The correction therefore explains part, ",
+    "but not all, of the pattern: juvenile survival is still estimated to be modestly ",
+    "higher than adult survival pond-wide even after removing the IP2 detection ",
+    "artifact, so some genuine juvenile survival advantage (or an unresolved bias ",
+    "elsewhere in the model) likely remains."
+  )
+}
+```
+
+```{r ip-giel-robustdesign-table}
+if (run_giel_rd) {
+  knitr::kable(giel_dE_tab, align = c("l", "c", "c", "c"),
+               caption = "Die-off event survival offsets (monthly logit scale) for Bonytail ponds with a confirmed die-off event (IP2, IP5). IP6 has no recorded event and its offset is essentially prior-driven.")
+}
+```
+
+To complement the post-stocking survival, known survivor, and mark-recapture analyses above, a hierarchical Bayesian joint robust-design model (Kery and Schaub 2011 framework, implemented in NIMBLE) was fit to all three Bonytail ponds simultaneously. This model estimates monthly survival, detection, and abundance for tagged and untagged fish jointly, and incorporates two structural features specific to Bonytail: (1) a fixed survival-reducing offset (`dE`) for the two confirmed die-off windows — IP2, January–July 2022, and IP5, January–September 2020, both attributed to operational (well pump) failure (Marsh et al. 2024) — and (2) a maturation hazard tying the juvenile-to-adult transition to fish size and time since tagging, derived from a companion bonytail growth model.
+
+`r if (run_giel_rd) giel_narrative_dE`
+
+Several alternative model structures were compared during development, including three candidate growth-model sources for the size-tied maturation hazard (a within-pond growth-increment model, the same model supplemented with an external historical pond, and an independent age-based growth model). All three gave statistically indistinguishable survival and die-off results, so the simplest of the three — a growth-increment model fit to IPCA data alone — was adopted as the final maturation-hazard source.
+
+A structural refinement was also made to pond IP2's detection submodel. An earlier fit had estimated much lower detection probability for juveniles than adults specifically at IP2 (unlike IP5 and IP6, where juvenile detection was as good as or better than adult detection), raising the concern that undetected juveniles were being misread by the model as long-lived rather than dead — which would inflate the model's estimate of juvenile survival relative to adult survival. To test this, a single shared detection parameter for juveniles and adults was introduced at IP2 only (IP5 and IP6 retained independent juvenile and adult detection estimates, and no other model outputs were affected by this change).
+
+`r if (run_giel_rd) giel_narrative_dJ`
+
+All core survival and detection hyperparameters converged well in the final model (R-hat <= 1.1), and the model's estimated number of tagged fish alive met or exceeded the minimum known survivor count in every pond and month, as required. A chronic pattern of low adult survival at IP2 in several non-die-off seasons (FY2018, FY2019, FY2021, FY2024, and FY2025) was not resolved by the detection fix and remains an open question for future investigation — it is not explained by either of the two documented die-off events and may indicate additional, currently unflagged mortality sources at that pond.
+
 ```{r export-estimates}
 #| label: export-estimates
 #| include: false

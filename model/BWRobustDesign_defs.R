@@ -13,8 +13,16 @@ make_rd_inputs <- function(ponds) {
     mutate(pond_new = match(pond, ponds),
            count_from = entry_t + as.integer(origin == 2L),
            row0 = keep)
+  # TL_entry_bin / hasTL are added to the collapsing key (2026-09-14, GIEL
+  # size-tied maturation hazard) so that two fish with otherwise-identical
+  # detection histories but different TL bins -- and therefore different
+  # size-tied maturation trajectories -- are NOT collapsed together. hasTL
+  # is included too so unknown-TL fish (which all carry the same dummy
+  # TL_entry_bin = 1, see model/BWRobustDesign_data.R) still collapse with
+  # each other regardless of that dummy value.
   hist_key <- apply(cbind(FishSub$pond_new, FishSub$entry_t, FishSub$end_t, FishSub$stage0,
                           FishSub$origin, FishSub$removed, FishSub$count_from,
+                          FishSub$hasTL, FishSub$TL_entry_bin,
                           y_mat[keep, ], K_mat[keep, ], stobs_mat[keep, ], post_mat[keep, ]),
                     1, paste, collapse = ",")
   FishSub$hist <- match(hist_key, unique(hist_key))
@@ -22,7 +30,9 @@ make_rd_inputs <- function(ponds) {
     group_by(hist) |>
     summarise(pond_new = first(pond_new), entry_t = first(entry_t), end_t = first(end_t),
               stage0 = first(stage0), origin = first(origin), removed = first(removed),
-              count_from = first(count_from), w = n(), row0 = first(row0), .groups = "drop") |>
+              count_from = first(count_from), hasTL = first(hasTL),
+              TL_entry_bin = first(TL_entry_bin),
+              w = n(), row0 = first(row0), .groups = "drop") |>
     arrange(pond_new, entry_t, hist)
   NP <- length(ponds); TT <- T_PRIM
   pond_off <- c(0L, cumsum(tabulate(Hist$pond_new, nbins = NP)))
@@ -47,13 +57,27 @@ make_rd_inputs <- function(ponds) {
     y_vec = flat(y_mat), w = Hist$w,
     entry_t = Hist$entry_t, end_t = Hist$end_t, removed = as.integer(Hist$removed),
     stage0 = Hist$stage0, origin = Hist$origin, count_from = Hist$count_from,
+    hasTL = as.integer(Hist$hasTL), tlbin = as.integer(Hist$TL_entry_bin),
     eff = eff_std[ponds, , drop = FALSE],
     Evt = RD_constants$Evt[ponds, , drop = FALSE], nEvt = RD_constants$nEvt[ponds, , drop = FALSE],
     ev_pond = NetSub$pond_new, ev_t = NetSub$t_e, ev_season = NetSub$season,
     ev_stage = NetSub$stage, ev_n = NetSub$n, ev_remU_before = NetSub$remU_before,
-    remU = RD_constants$remU[ponds, , , drop = FALSE]
+    remU = RD_constants$remU[ponds, , , drop = FALSE],
+    # GIEL size-tied maturation hazard lookup (same table for every pond
+    # subset -- not pond-specific, so no [ponds, ] slicing needed)
+    psi_lookup = RD_constants$psi_lookup, N_TLBIN = RD_constants$N_TLBIN,
+    DELTA_T_MAX = RD_constants$DELTA_T_MAX
   )
   constants$Uk <- as.integer(PondTable$pond[ponds] != 1)   # YCB initial pool unknown
+  # Shared juvenile/adult detection intercept at IP2 (2026-09-15; mirrors the
+  # XYTE three-stage model's L-stage fix, see AGENTS.md "IP2 (Pond 2)
+  # adult-survival investigation"): IP2 is the only GIEL pond where juvenile
+  # detection is much worse than adult detection, a low-detection-as-a-
+  # survival-sink failure mode that inflates apparent juvenile survival
+  # (dJ[GIEL] > 0). sharedLp[j] == 1 forces lp[j,2] <- lp[j,1] at IP2; 0
+  # everywhere else (a no-op for every other pond/fit, including XYTE-only
+  # subsets of the joint model, which never include IP2).
+  constants$sharedLp <- as.integer(PondTable$Backwater[ponds] == "IP2")
   data <- list(
     zero = rep(0, NP),
     ev_m = NetSub$m,
@@ -78,7 +102,9 @@ rdPond <- nimbleFunction(
                  nfish = double(), T = double(),
                  lphiJ = double(1), lphiA = double(1), season = double(1), gap = double(1),
                  pJ = double(1), pA = double(1), bpost = double(1), lpsi = double(),
-                 evt = double(1), dE = double()) {
+                 evt = double(1), dE = double(),
+                 tlbin = double(1), hasTL = double(1), psi_lookup = double(2),
+                 lpsi_adj = double(), dtmax = double()) {
     returnType(double(2))
     out  <- matrix(0, nrow = T, ncol = 3)
     phJt <- matrix(0, nrow = T, ncol = 6)   # column = post * 3 + origin
@@ -133,7 +159,34 @@ rdPond <- nimbleFunction(
         a[t, 1] <- a1; a[t, 2] <- a2; a[t, 3] <- a3
         if (t < t2) {
           idx <- post[off + t] * 3 + o
-          pJs <- phJt[t, idx]; pAs <- phAt[t, idx]; ps <- pst[t]
+          pJs <- phJt[t, idx]; pAs <- phAt[t, idx]
+          # GIEL size-tied maturation hazard (2026-09-14): for fish with a
+          # known TL bin at entry (hasTL[i] == 1), replace the constant
+          # per-species monthly hazard (pst[t], from lpsi[sp]) with a
+          # cumulative product over the gap[t] intervening months of the
+          # size- and time-since-entry-specific hazard psi_lookup[bin, dt],
+          # logit-shifted by lpsi_adj[sp]. dt = months elapsed since entry
+          # (dt = 1 for the month immediately after entry); beyond dtmax
+          # months, maturation is treated as certain that month. Fish with
+          # hasTL[i] == 0 (XYTE, or GIEL with imputed/missing TL) keep the
+          # original scalar-lpsi pst[t] path unchanged.
+          if (hasTL[i] == 1) {
+            g <- gap[t]
+            dt0 <- t - entry[i]
+            surv <- 1
+            for (kk2 in 1:g) {
+              dtk <- dt0 + kk2
+              if (dtk > dtmax) {
+                psi_k <- 1
+              } else {
+                psi_k <- ilogit(logit(psi_lookup[tlbin[i], dtk]) + lpsi_adj)
+              }
+              surv <- surv * (1 - psi_k)
+            }
+            ps <- 1 - surv
+          } else {
+            ps <- pst[t]
+          }
           n1 <- a1 * pJs * (1 - ps)
           n2 <- a1 * pJs * ps + a2 * pAs
           n3 <- a3 + a1 * (1 - pJs) + a2 * (1 - pAs)
@@ -162,7 +215,26 @@ rdPond <- nimbleFunction(
         if (t > t1) {
           eb1 <- em[t, 1] * b1; eb2 <- em[t, 2] * b2; eb3 <- em[t, 3] * b3
           idx <- post[off + t - 1] * 3 + o
-          pJs <- phJt[t - 1, idx]; pAs <- phAt[t - 1, idx]; ps <- pst[t - 1]
+          pJs <- phJt[t - 1, idx]; pAs <- phAt[t - 1, idx]
+          # Same size-tied override as the forward pass above, for the
+          # transition starting at t - 1.
+          if (hasTL[i] == 1) {
+            g <- gap[t - 1]
+            dt0 <- (t - 1) - entry[i]
+            surv <- 1
+            for (kk2 in 1:g) {
+              dtk <- dt0 + kk2
+              if (dtk > dtmax) {
+                psi_k <- 1
+              } else {
+                psi_k <- ilogit(logit(psi_lookup[tlbin[i], dtk]) + lpsi_adj)
+              }
+              surv <- surv * (1 - psi_k)
+            }
+            ps <- 1 - surv
+          } else {
+            ps <- pst[t - 1]
+          }
           nb1 <- pJs * (1 - ps) * eb1 + pJs * ps * eb2 + (1 - pJs) * eb3
           nb2 <- pAs * eb2 + (1 - pAs) * eb3
           nb3 <- eb3
@@ -204,7 +276,8 @@ rd_code <- nimbleCode({
       b_post[s, o] ~ T(dnorm(-1, sd = 1), , 0)   # post-release offset: stocked, netting-tagged
     }
     b_post[s, 3] <- 0                            # established fish
-    lpsi[s]  ~ dnorm(-2.4, sd = 1)               # logit monthly maturation J -> A
+    lpsi[s]  ~ dnorm(-2.4, sd = 1)               # logit monthly maturation J -> A (scalar fallback path)
+    lpsi_adj[s] ~ dnorm(0, sd = 1)               # logit offset on the GIEL size-tied psi_lookup hazard (see AGENTS.md); prior-only for species with no known-TL juveniles (XYTE)
     g_eff[s] ~ dnorm(0, sd = 1)                  # effect of standardized log scan hours
     d_moy[s, 1] <- 0
     for (mm in 2:NMOY) { d_moy[s, mm] ~ dnorm(0, sd = 1) }
@@ -219,7 +292,13 @@ rd_code <- nimbleCode({
       lphiA[j, y] ~ dnorm(mu_phi[sp[j]], sd = sigma_phi[sp[j]])   # pond-season adult survival
       lphiJ[j, y] <- lphiA[j, y] + dJ[sp[j]]
     }
-    for (st in 1:2) { lp[j, st] ~ dnorm(1, sd = 1.5) }            # pond x stage detection
+    for (st in 1:2) { lp_raw[j, st] ~ dnorm(1, sd = 1.5) }        # pond x stage detection
+    lp[j, 1] <- lp_raw[j, 1]
+    # Shared juvenile/adult detection intercept at IP2 (sharedLp[j] == 1);
+    # lp_raw[j, 2] is an unused, prior-only node at IP2 (kept so every pond
+    # has the same node structure) and the free juvenile/adult detection
+    # difference at every other pond.
+    lp[j, 2] <- lp_raw[j, 1] * sharedLp[j] + lp_raw[j, 2] * (1 - sharedLp[j])
     # Known die-off (data/BWDieOffEvents.csv): fixed, pond-specific, survival-
     # reducing-only logit offset applied to J/A alike in event months
     # (Evt[j,t] == 1). Ponds with no recorded event carry an uninformative
@@ -246,7 +325,11 @@ rd_code <- nimbleCode({
       nfish = pond_off[j + 1] - pond_off[j], T = T,
       lphiJ = lphiJ[j, 1:NS], lphiA = lphiA[j, 1:NS], season = season[1:T], gap = gap[1:T],
       pJ = pJ[j, 1:T], pA = pA[j, 1:T], bpost = b_post[sp[j], 1:3], lpsi = lpsi[sp[j]],
-      evt = Evt[j, 1:T], dE = dE[j])
+      evt = Evt[j, 1:T], dE = dE[j],
+      tlbin = tlbin[(pond_off[j] + 1):pond_off[j + 1]],
+      hasTL = hasTL[(pond_off[j] + 1):pond_off[j + 1]],
+      psi_lookup = psi_lookup[1:N_TLBIN, 1:DELTA_T_MAX],
+      lpsi_adj = lpsi_adj[sp[j]], dtmax = DELTA_T_MAX)
     zero[j] ~ dLLtrick(RD[j, 1, 3])
     for (st in 1:2) {
       for (t in 1:T) { N_tag[j, t, st] <- RD[j, t, st] }
@@ -306,10 +389,10 @@ make_inits <- function(inp, seed) {
   list(
     mu_phi = mu_phi, sigma_phi = runif(NSP, 0.2, 0.6), dJ = rnorm(NSP, -0.5, 0.2),
     b_post = cbind(matrix(runif(2 * NSP, -1.5, -0.3), NSP, 2), 0),
-    lpsi = rnorm(NSP, -2.4, 0.2), g_eff = rnorm(NSP, 0.3, 0.1),
+    lpsi = rnorm(NSP, -2.4, 0.2), lpsi_adj = rnorm(NSP, 0, 0.2), g_eff = rnorm(NSP, 0.3, 0.1),
     d_moy = cbind(0, matrix(rnorm(NSP * (cst$NMOY - 1), 0, 0.2), NSP)),
     mu_r = mu_r, sigma_r = runif(NSP, 0.3, 0.8), nu = runif(NSP, 4, 6),
-    lp = matrix(rnorm(NP * 2, 1, 0.3), NP, 2),
+    lp_raw = matrix(rnorm(NP * 2, 1, 0.3), NP, 2),
     lphiA = matrix(rnorm(NP * NS, mu_phi[cst$sp], 0.2), NP, NS),
     lr = matrix(rnorm(NP * (NS - 1), mu_r[cst$sp], 0.1), NP, NS - 1),
     U0 = U0,
@@ -348,7 +431,7 @@ repair_inits <- function(model, max_tries = 200) {
 # ---------------------------------------------------------------------------
 # Build, configure, compile and run one chain (used directly or in a worker)
 # ---------------------------------------------------------------------------
-rd_monitors <- c("mu_phi", "sigma_phi", "dJ", "dE", "b_post", "lpsi", "lp", "g_eff",
+rd_monitors <- c("mu_phi", "sigma_phi", "dJ", "dE", "b_post", "lpsi", "lpsi_adj", "lp", "lp_raw", "g_eff",
                  "d_moy", "mu_r", "sigma_r", "nu", "U0",
                  "lphiA", "r", "U", "RecJ", "N_tag", "Tal", "Atot")
 
@@ -361,7 +444,7 @@ rd_configure <- function(model) {
   NSP <- model$getConstants()$NSP
   for (s in 1:NSP) {
     tgt_phi <- c(paste0("dJ[", s, "]"), paste0("b_post[", s, ", 1]"),
-                 paste0("b_post[", s, ", 2]"), paste0("lpsi[", s, "]"))
+                 paste0("b_post[", s, ", 2]"), paste0("lpsi[", s, "]"), paste0("lpsi_adj[", s, "]"))
     conf$removeSamplers(tgt_phi)
     conf$addSampler(target = tgt_phi, type = "RW_block", control = list(adaptInterval = 200))
     tgt_p <- c(paste0("g_eff[", s, "]"), paste0("d_moy[", s, ", ", 2:NMOY, "]"))
@@ -372,7 +455,7 @@ rd_configure <- function(model) {
     tgt_e <- paste0("lphiA[", j, ", ", 1:NS, "]")
     conf$removeSamplers(tgt_e)
     conf$addSampler(target = tgt_e, type = "RW_block", control = list(adaptInterval = 200))
-    tgt_lp <- paste0("lp[", j, ", ", 1:2, "]")
+    tgt_lp <- paste0("lp_raw[", j, ", ", 1:2, "]")
     conf$removeSamplers(tgt_lp)
     conf$addSampler(target = tgt_lp, type = "RW_block", control = list(adaptInterval = 200))
   }

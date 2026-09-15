@@ -97,7 +97,7 @@ cat("Total wall time (compile + MCMC):", round(run_time, 1), "min\n")
 # ---------------------------------------------------------------------------
 # Diagnostics and save
 # ---------------------------------------------------------------------------
-core_pars <- c("mu_phi", "sigma_phi", "dJ", "dE", "b_post", "lpsi", "lp", "g_eff",
+core_pars <- c("mu_phi", "sigma_phi", "dJ", "dE", "b_post", "lpsi", "lpsi_adj", "lp", "lp_raw", "g_eff",
                "mu_r", "sigma_r", "nu", "U0")
 rd_summary <- MCMCsummary(rd_samples, params = core_pars, round = 3)
 print(rd_summary)
