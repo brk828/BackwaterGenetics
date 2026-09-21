@@ -1,0 +1,413 @@
+---
+title: "Data Sufficiency for the Proposed Bonytail IPM (Sound Science LLC)"
+subtitle: "Annual-occasion detection, age/origin stage, and event-timing diagnostics for IPCA Ponds 2, 5, 6"
+author: "Marsh & Associates"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    fig-width: 9
+    fig-height: 5.5
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+load("data/ReportingData.RData")
+theme_set(theme_bw(base_size = 12))
+
+giel_ponds <- tibble(
+  location = c("IPCA (Pond 2)", "IPCA (Pond 5)", "IPCA (Pond 6)"),
+  LID = c(1044L, 1047L, 1048L),
+  Pond = c("Pond 2", "Pond 5", "Pond 6")
+)
+all_ponds <- tibble(
+  location = c("Yuma Cove backwater", "IPCA (Pond 1)", "IPCA (Pond 2)",
+               "IPCA (Pond 3)", "IPCA (Pond 4)", "IPCA (Pond 5)", "IPCA (Pond 6)"),
+  Pond = c("YCB", "Pond 1", "Pond 2", "Pond 3", "Pond 4", "Pond 5", "Pond 6")
+)
+
+fy_of <- function(d) year(d) + (month(d) > 9)
+season_bounds <- function(fy) {
+  tibble(start = as.Date(sprintf("%d-10-01", fy - 1)), end = as.Date(sprintf("%d-04-30", fy)))
+}
+
+DieOffs <- read.csv("data/BWDieOffEvents.csv", stringsAsFactors = FALSE) |>
+  mutate(
+    StartDate = as.Date(paste0(StartMonth, "-01")),
+    EndDate = ceiling_date(as.Date(paste0(EndMonth, "-01")), "month") - 1
+  )
+```
+
+## Purpose and how to read this report
+
+`IPGIELScannerDiagnostics.qmd` asks whether the Bonytail scanning record is dense enough to
+support **our own** monthly/weekly robust-design mark-recapture model. This report asks a
+different question: whether the same underlying data support the structure **Sound Science
+LLC has proposed** for a bonytail integrated population model (IPM) — an annualized,
+Bayesian state-space model with CJS-style mark-recapture, age/size-based juvenile stages, a
+per-pond stocked-vs-wild-hatched origin effect, and environmental covariates on survival and
+reproduction (`documents/BONY Proposed IPM - Model Description 9-16-26.docx`, summarized in
+`documents/BONY_Proposed_IPM_Summary.md`).
+
+Two markdown critiques already argue this qualitatively: `model/BONY_ProposedIPM_Critique.md`
+(structural relevance to bonytail vs. razorback sucker) and
+`model/BONY_ProposedIPM_916_Critique.md` (the revised age-based draft, including pond-year
+recruit-count tables and figures). This report consolidates and extends the quantitative parts
+of that argument into one reproducible, self-contained document, computed directly from
+`data/ReportingData.RData` — no NIMBLE model is fit here, matching the method already used in
+the two critique documents.
+
+Scope is the off-channel component only — **IPCA Ponds 2, 5, 6**, the only sites this project
+holds Bonytail data for. The open-water CJS component and Cibola High Levee Pond are outside
+this project's data and are not addressed.
+
+## Site inclusion check
+
+The proposed model drops IP1, IP3, and Yuma Cove from the BONY analysis on recapture-rate
+grounds (≤5.3%) and keeps IP2, IP5, IP6 (plus CHLP, outside our data). This section verifies
+that claim directly against `StudyBWAnalysis`.
+
+```{r site-inclusion}
+SiteCheck <- StudyBWAnalysis |>
+  filter(species == "GIEL") |>
+  left_join(all_ponds, by = "location") |>
+  group_by(Pond) |>
+  summarise(
+    n_tagged = n(),
+    n_recap_1yr = sum(MaxDAL >= 365, na.rm = TRUE),
+    recap_pct = round(100 * n_recap_1yr / n_tagged, 1),
+    .groups = "drop"
+  )
+FullPondList <- all_ponds |>
+  select(Pond) |>
+  left_join(SiteCheck, by = "Pond") |>
+  mutate(across(c(n_tagged, n_recap_1yr), ~replace_na(.x, 0)),
+         recap_pct = replace_na(recap_pct, NA_real_))
+kable(FullPondList,
+      col.names = c("Pond", "GIEL tagged (ever)", "Recaptured \u2265 1 yr later", "Recapture %"),
+      caption = "GIEL tagging and \u22651-year recapture by pond, all seven backwaters") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+Yuma Cove and IP1 have **zero** GIEL records at all; IP3 has 2 (the single documented
+pond-hopper transfer `003C06F28D`). This is a stronger statement than "low recapture" — those
+three sites simply have no bonytail population to model, confirming the proposed inclusion
+rule (and clarifying that the cited "5.3%" figure, if it refers to these three sites at all,
+describes an essentially empty dataset rather than a borderline one).
+
+## Annual-occasion detection sufficiency
+
+The proposed model uses an **annual** time step. This section collapses `StudyBWContacts` to
+one Oct\u2013Apr occasion per fiscal year (FY) per pond — the coarsest reasonable annualization,
+matching this project's existing Jan\u2013Feb/Oct\u2013Apr mark-recapture convention — and asks how
+much information a single annual occasion carries, in contrast to the ~7 monthly primary
+periods per season used in our own robust-design model.
+
+```{r annual-detect}
+fy_range <- 2017:2025
+AnnualWindows <- tibble(FY = fy_range) |>
+  mutate(start = as.Date(sprintf("%d-10-01", FY - 1)), end = as.Date(sprintf("%d-04-30", FY)))
+
+KnownAliveAnnual <- AnnualWindows |>
+  crossing(giel_ponds |> select(Pond)) |>
+  left_join(
+    StudyBWAnalysis |> filter(species == "GIEL") |> left_join(giel_ponds, by = "location"),
+    by = "Pond", relationship = "many-to-many"
+  ) |>
+  filter(first_date <= end, MaxScanDate >= start) |>
+  group_by(Pond, FY) |>
+  summarise(known_alive = n(), .groups = "drop")
+
+ContactsGIEL <- StudyBWContacts |>
+  filter(LID %in% giel_ponds$LID, Species == "GIEL") |>
+  left_join(giel_ponds, by = "LID")
+
+DetectedAnnual <- AnnualWindows |>
+  crossing(giel_ponds |> select(Pond)) |>
+  left_join(ContactsGIEL, by = "Pond", relationship = "many-to-many") |>
+  filter(Date >= start, Date <= end) |>
+  group_by(Pond, FY) |>
+  summarise(detected = n_distinct(PITIndex), .groups = "drop")
+
+AnnualDetect <- AnnualWindows |>
+  select(FY) |>
+  crossing(giel_ponds |> select(Pond)) |>
+  left_join(KnownAliveAnnual, by = c("Pond", "FY")) |>
+  left_join(DetectedAnnual, by = c("Pond", "FY")) |>
+  mutate(across(c(known_alive, detected), ~replace_na(.x, 0)),
+         annual_detect_rate = if_else(known_alive > 0, detected / known_alive, NA_real_))
+
+# Fish detected this FY who are also detected in the immediately following FY
+NextDetected <- ContactsGIEL |>
+  distinct(Pond, PITIndex, Date) |>
+  mutate(FY = fy_of(Date)) |>
+  filter(month(Date) %in% c(10:12, 1:4)) |>
+  distinct(Pond, PITIndex, FY)
+
+AnnualRecap <- NextDetected |>
+  inner_join(NextDetected |> mutate(FY = FY - 1), by = c("Pond", "PITIndex", "FY")) |>
+  count(Pond, FY, name = "recap_next_fy")
+
+AnnualDetect <- AnnualDetect |>
+  left_join(DetectedAnnual |> rename(marked_this_fy = detected), by = c("Pond", "FY")) |>
+  left_join(AnnualRecap, by = c("Pond", "FY")) |>
+  mutate(
+    recap_next_fy = replace_na(recap_next_fy, 0),
+    marked_this_fy = replace_na(marked_this_fy, 0),
+    sufficient = known_alive >= 15 & recap_next_fy >= 5
+  )
+
+kable(AnnualDetect |> select(Pond, FY, known_alive, marked_this_fy, annual_detect_rate,
+                             recap_next_fy, sufficient) |> arrange(Pond, FY),
+      digits = 2,
+      col.names = c("Pond", "FY", "Known alive (Oct\u2013Apr)", "Detected this FY",
+                    "Annual detection rate", "Detected again next FY", "Sufficient?"),
+      caption = "Annual (Oct\u2013Apr) occasion detection summary, one row per pond \u00d7 FY") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 12)
+```
+
+"Sufficient" here uses a low bar (\u226515 fish known alive, \u22655 detected again the following FY)
+— the minimum for an annual survival/detection pair to be estimated from more than a handful
+of observations, not a precision target. `recap_next_fy` is the direct annual analogue of a
+CJS mark-recapture count between two consecutive occasions; compare it against the monthly
+robust-design model's weekly detection rates documented in `IPGIELScannerDiagnostics.qmd`
+(typically 0.3\u20130.9 per week, cumulating to much higher within-season detection probability
+than a single annual occasion can achieve).
+
+```{r annual-detect-plot, fig.height=4}
+ggplot(AnnualDetect, aes(x = FY, y = annual_detect_rate)) +
+  geom_col(aes(fill = sufficient)) +
+  facet_wrap(~Pond, ncol = 1) +
+  scale_x_continuous(breaks = fy_range) +
+  scale_fill_manual(values = c(`TRUE` = "steelblue", `FALSE` = "grey70"),
+                     name = "Meets low-bar sufficiency") +
+  labs(x = "Fiscal year", y = "Annual detection rate (Oct\u2013Apr occasion)",
+       title = "Single-occasion annual detection rate by pond and FY")
+```
+
+## Die-off timing vs. annual-occasion boundaries
+
+The two confirmed GIEL die-offs (IP5 2020, IP2 2022) are documented month-by-month in
+`data/BWDieOffEvents.csv` and land mid-fiscal-year, not at FY boundaries. A single annual
+survival parameter for the FY containing a crash necessarily averages several full-survival
+months together with the acute event, diluting the fitted magnitude of the crash relative to
+the true monthly rate — the same dilution problem already documented for our own `dE` die-off
+term when its window was too wide (see `AGENTS.md`, "IP1 window correction").
+
+```{r dieoff-timing, fig.height=5}
+DieoffPlot <- TotalCountIPGIEL |>
+  filter(sex == "Total", Backwater %in% c("IP2", "IP5")) |>
+  mutate(FY = fy_of(Date))
+fy_starts <- tibble(FY = fy_range, start = as.Date(sprintf("%d-10-01", FY - 1))) |>
+  filter(start >= min(DieoffPlot$Date), start <= max(DieoffPlot$Date))
+
+ggplot(DieoffPlot, aes(x = Date, y = Count)) +
+  geom_rect(data = DieOffs |> filter(Backwater %in% c("IPCA (Pond 2)", "IPCA (Pond 5)")) |>
+              mutate(Backwater2 = if_else(Backwater == "IPCA (Pond 2)", "IP2", "IP5")),
+            aes(xmin = StartDate, xmax = EndDate, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "firebrick", alpha = 0.15) +
+  geom_vline(data = fy_starts, aes(xintercept = start), linetype = "dotted", color = "grey40") +
+  geom_line() +
+  facet_wrap(~Backwater, ncol = 1, scales = "free_y") +
+  labs(x = NULL, y = "Known-alive count",
+       title = "Known-alive Bonytail counts, confirmed die-off windows (red), FY boundaries (dotted)")
+```
+
+The IP5 crash (Jan\u2013Sep 2020) spans two FYs' worth of calendar time within FY2020 alone and the
+IP2 crash (Jan\u2013Jul 2022) sits entirely inside FY2022 but well after that FY's October start —
+an annual Oct\u2013Apr occasion boundary would place the marking occasion for FY2022 *before* the
+population had crashed and the next marking occasion (FY2023) entirely *after*, so the
+observed annual transition would show the full magnitude of the crash correctly by coincidence
+for IP2, but a coarser calendar-year annual step (as used by the proposed IPM, not
+Oct\u2013Apr-specific) could split it differently. This is a caution to check the proposed model's
+actual annual step definition against these windows rather than an assumption of failure.
+
+## Age/origin stage sufficiency
+
+The proposed model splits juvenile survival into age-0/age-1 annual steps and estimates a
+per-pond stocked-vs-wild-hatched origin effect. Both require enough wild-hatched
+(net-captured, not stocked) juveniles tagged and later re-encountered. This reproduces and
+refreshes the pond \u00d7 FY tabulation from `model/BONY_ProposedIPM_916_Critique.md` \u00a72\u20133 live from
+`StudyBWAnalysis`.
+
+```{r wildhatched}
+WildHatched <- StudyBWAnalysis |>
+  filter(species == "GIEL", event == "capture", total_length < 250) |>
+  left_join(giel_ponds, by = "location") |>
+  mutate(FY = fy_of(first_date)) |>
+  filter(FY %in% fy_range)
+
+WildHatchedTab <- WildHatched |>
+  group_by(Pond, FY) |>
+  summarise(
+    n_tagged = n(),
+    n_recap_1yr = sum(MaxDAL >= 365, na.rm = TRUE),
+    prop_recap = round(n_recap_1yr / n_tagged, 2),
+    median_TL = round(median(total_length, na.rm = TRUE), 1),
+    sd_TL = round(sd(total_length, na.rm = TRUE), 1),
+    .groups = "drop"
+  ) |>
+  right_join(crossing(Pond = giel_ponds$Pond, FY = fy_range), by = c("Pond", "FY")) |>
+  mutate(across(c(n_tagged, n_recap_1yr), ~replace_na(.x, 0)),
+         sufficient = n_tagged >= 15 & n_recap_1yr >= 10) |>
+  arrange(Pond, FY)
+
+kable(WildHatchedTab,
+      col.names = c("Pond", "FY", "Wild-hatched tagged", "Recontacted \u2265 1 yr",
+                    "Prop. recontacted", "Median TL (mm)", "SD TL (mm)", "Sufficient for origin/age split?"),
+      caption = "Wild-hatched (net-captured, <250mm TL) juveniles tagged by pond and FY") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 12)
+
+n_suff <- sum(WildHatchedTab$sufficient, na.rm = TRUE)
+n_total <- nrow(WildHatchedTab)
+```
+
+`r n_suff` of `r n_total` pond-years (`r round(100*n_suff/n_total)`%) clear even this low bar
+(\u226515 tagged, \u226510 recontacted \u22651 yr later). This matches the finding already reported in
+`model/BONY_ProposedIPM_916_Critique.md` \u00a72.
+
+```{r wildhatched-plot, fig.height=4}
+ggplot(WildHatchedTab, aes(x = FY, y = n_tagged, fill = sufficient)) +
+  geom_col() +
+  facet_wrap(~Pond, ncol = 1) +
+  scale_x_continuous(breaks = fy_range) +
+  scale_fill_manual(values = c(`TRUE` = "steelblue", `FALSE` = "grey70"), name = "Sufficient?") +
+  labs(x = "Fiscal year", y = "Wild-hatched juveniles tagged",
+       title = "Wild-hatched recruits tagged by pond and season")
+```
+
+```{r size-histograms, fig.height=6}
+ggplot(WildHatched, aes(x = total_length)) +
+  geom_histogram(binwidth = 15, boundary = 0) +
+  facet_grid(FY ~ Pond) +
+  labs(x = "Total length at tagging (mm)", y = "Count",
+       title = "Size at tagging for wild-hatched Bonytail, by pond and season") +
+  theme(strip.text.y = element_text(angle = 0))
+```
+
+No pond-season shows a visually separable bimodal split corresponding to "this year's young"
+vs. "last year's survivors held over" — sizes form a broad, largely continuous spread within
+each season. The age-0/age-1 assignment the proposed model needs therefore cannot come from
+raw size-at-tagging alone; it depends entirely on the fitted growth curve discussed next.
+
+## Growth-curve identifiability for hatch-year assignment
+
+The proposed age-based structure back-calculates each wild-hatched recruit's hatch year from
+length via a single fitted von Bertalanffy growth curve. This project has already fit that
+curve, under three different data-pooling choices, in `model/GIEL_GrowthTrackComparison.R`
+(full detail in `model/GIEL_GrowthTrackComparison_Summary.md`). In every version, the fitted
+asymptotic size (`Linf`) collapsed **below** the largest Bonytail actually measured in these
+ponds — a classic symptom of too few recaptures near the adult size ceiling, not a bug in any
+one fit. The figure below (reproduced from that completed model, not re-fit here) shows how
+much the resulting probability-of-maturation curves diverge across model choices, particularly
+at smaller sizes — the same instability that would propagate into any hatch-year
+back-calculation.
+
+```{r growth-curve-fig}
+#| fig-cap: "Existing GIEL growth-track model comparison (reused from `model/GIEL_GrowthTrackComparison.R`)"
+include_graphics("model/GIEL_GrowthTrackComparison_ProbCurves.png")
+```
+
+**Practical consequence:** even within the pond-years flagged as "sufficient" above, any
+age-0/age-1 split or hatch-year assignment inherits this curve's uncertainty, which is worst
+for exactly the smaller, more numerous wild-hatched fish that dominate the tagged sample.
+
+## Origin composition per pond-year
+
+For a per-pond origin effect (stocked vs. wild-hatched) to be estimable at all, a pond-season
+needs *both* origins present in meaningful numbers. This extends the wild-hatched-only table
+above to include stocked fish for context.
+
+```{r origin-comp}
+OriginTab <- StudyBWAnalysis |>
+  filter(species == "GIEL") |>
+  left_join(giel_ponds, by = "location") |>
+  mutate(FY = fy_of(first_date), origin_lab = if_else(event == "stocking", "Stocked", "Wild-hatched")) |>
+  filter(FY %in% fy_range) |>
+  count(Pond, FY, origin_lab) |>
+  pivot_wider(names_from = origin_lab, values_from = n, values_fill = 0) |>
+  right_join(crossing(Pond = giel_ponds$Pond, FY = fy_range), by = c("Pond", "FY")) |>
+  mutate(across(c(Stocked, `Wild-hatched`), ~replace_na(.x, 0)),
+         both_present = Stocked > 0 & `Wild-hatched` > 0) |>
+  arrange(Pond, FY)
+
+kable(OriginTab, col.names = c("Pond", "FY", "Stocked tagged", "Wild-hatched tagged", "Both origins present?"),
+      caption = "Stocked vs. wild-hatched Bonytail tagged, by pond and FY") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 12)
+
+n_both <- sum(OriginTab$both_present)
+```
+
+Only `r n_both` of `r nrow(OriginTab)` pond-years have any stocked and any wild-hatched fish
+tagged in the same season — most pond-years are effectively single-origin, meaning an
+origin effect is identified mainly by *between*-season, not *within*-season, contrast, and is
+confounded with whatever season-to-season variation (including the two known crashes) coincides
+with a change in which origin dominates.
+
+## Reproduction (F) data availability
+
+The proposed model estimates reproduction (F) from parentage assignment of genotyped
+larvae/YOY against a near-complete genotyped adult pool. This project's own genetics pipeline
+(`Analysis Rules and Caveats` in `AGENTS.md`) currently has parentage data only for Yuma Cove
+and IPCA Pond 1 **Razorback Sucker** — there is no GIEL parentage join in this project's
+pipeline. A University of New Mexico dataset with some bonytail parentage data exists
+independently (per `model/BONY_ProposedIPM_Critique.md` \u00a73) but its coverage of IP2/5/6
+specifically, its temporal span, and whether it is available at the individual-assignment level
+(vs. summary statistics) are open questions tracked in the `Open TODOs` section of `AGENTS.md`
+(`data/UNM_GIEL_ParentageSampling.csv`). No new data pull is attempted here — this is a
+documented capability gap, not a data-sufficiency result this report can compute.
+
+## Environmental covariates
+
+No dissolved oxygen, temperature, or water-level series are currently collected or stored for
+any IPCA pond in this project. If such data become available, `model/BONY_ProposedIPM_Critique.md`
+\u00a73 recommends prioritizing the two known crash windows specifically (IP5 Jan\u2013Sep 2020, IP2
+Jan\u2013Jul 2022) to test whether they were genuinely operational (well-pump failure, per Marsh et
+al. 2024) rather than environmentally driven, before adding a continuous covariate to survival.
+
+## Summary and conclusions
+
+```{r summary-table}
+SummaryTab <- AnnualDetect |>
+  select(Pond, FY, annual_sufficient = sufficient) |>
+  full_join(WildHatchedTab |> select(Pond, FY, origin_sufficient = sufficient), by = c("Pond", "FY")) |>
+  left_join(
+    DieOffs |> mutate(Pond2 = case_when(
+      Backwater == "IPCA (Pond 2)" ~ "Pond 2",
+      Backwater == "IPCA (Pond 5)" ~ "Pond 5",
+      TRUE ~ NA_character_
+    )) |> filter(!is.na(Pond2)) |>
+      mutate(FY = fy_of(StartDate)) |> distinct(Pond = Pond2, FY) |> mutate(event_window = TRUE),
+    by = c("Pond", "FY")
+  ) |>
+  mutate(event_window = replace_na(event_window, FALSE)) |>
+  arrange(Pond, FY)
+
+kable(SummaryTab,
+      col.names = c("Pond", "FY", "Annual detection sufficient?", "Origin/age split sufficient?", "Confirmed die-off?"),
+      caption = "Combined pond \u00d7 FY sufficiency for the proposed annualized IPM structure") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 12)
+```
+
+Across `r nrow(SummaryTab)` pond-years: annual-occasion detection clears the low bar in
+`r sum(SummaryTab$annual_sufficient, na.rm=TRUE)` pond-years, and the age/origin split clears
+its low bar in `r sum(SummaryTab$origin_sufficient, na.rm=TRUE)`. Very few pond-years satisfy
+both simultaneously. Combined with the structural points raised in
+`model/BONY_ProposedIPM_Critique.md` and `model/BONY_ProposedIPM_916_Critique.md` — no
+smooth density/environment gradient in survival outside the two documented crashes, no
+GIEL-specific F pipeline, and a growth curve too unstable to support hatch-year
+back-calculation for larger recruits — the annual, multi-stage, covariate-rich structure
+proposed for bonytail is supported by real data in only a minority of pond-years,
+concentrated in IP2 and IP6; IP5, the pond with the more severe documented crash, has the
+least data of the three to support any of the proposed model's finer structure.

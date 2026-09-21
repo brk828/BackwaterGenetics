@@ -9,6 +9,15 @@ its structure assumes things our data don't support or that belong to razorback 
 than bonytail (GIEL), and (b) where our fitted models already speak to a structural choice the
 proposal has to make on paper.
 
+> **Update (2026-09-17):** Sound Science LLC issued a revised draft on 16 September 2026
+> (`documents/BONY Proposed IPM - Model Description 9-16-26.docx`), which replaces the size-stage
+> structure critiqued below with an age-based one (age-0/1 juvenile survival steps, hatch-year
+> assignment via a fitted growth curve, and a per-pond origin effect). See
+> `model/BONY_ProposedIPM_916_Critique.md` for the critique of that revised draft, including a
+> pond-year-by-pond-year quantification of how much wild-hatched-recruit data actually exists to
+> support an origin- or age-specific survival split (short answer: very little — 5 of 27
+> pond-years, and none at IP5).
+
 ---
 
 ## 1. Structure outline (as proposed)
