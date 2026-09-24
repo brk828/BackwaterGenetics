@@ -57,7 +57,7 @@ Fisheries population monitoring for PIT-tagged Razorback Sucker (XYTE) and Bonyt
 | — | `KnownSurvival.R` | *(Deprecated — wrangling moved to DataWrangling.R; script retained for standalone PNG generation only)* |
 | 3 | `PostStockingSurvival.R` | 3 PNG survival curve figures |
 | 4 | `BWMarkRecaptureEstimates.R` | 3 PNG estimate figures |
-| 5 | `BackwaterGrowth.R` | Growth summaries (no saved PNGs currently) |
+| — | `BackwaterGrowth.R` | *(Moved to `old code/` — GIEL recruit-size histograms adapted into `PopulationMonitoring.qmd` with FY-based binning (Oct–Dec only, `CaptureFY = year(first_date) + 1L`) and a Gaussian mixture bimodality table (`@tbl-giel-bimodal`); filter corrected to Ponds 2/5/6 explicitly to exclude 2 mislabeled Pond 3 GIEL records. Not part of the pipeline.)* |
 | 6 | `GeneticsAndSurvival.R` | 2 PNG offspring contribution figures |
 | 7 | `BackwaterMCR.R` | CJS model results (Pond 1 only; requires MARK software) |
 | 8 | `PopulationMonitoring.qmd` | Full 7-location report (HTML or DOCX); regenerates all PNGs and adds 2 cross-site comparison figures. Requires steps 1-2 first. Does **not** source scripts 3-6; models and genetics run inline. Includes an **Introduction** section (species conservation status, OCH concept, site histories, BONY pond sizes) and a **Data Sources and Monitoring Infrastructure** subsection in Methods. Narrative paragraphs for each location draw on `2025Report_IP_PopulationMonitoring.md`, `Marsh_et_al_2024_Summary.md`, and related document summaries. |
@@ -155,6 +155,474 @@ Plan file: `.posit/assistant/plans/2026-09-04-1335-ycb-three-stage-density-depen
 
 ---
 
+## Young-of-Year (YOY) vs. Carryover Recruit Classification (2026-09-23)
+
+**Problem identified by BK.** Every "recruit" count used for density-dependent
+growth/survival (`model/YCBSizeDensityEDA.qmd`, `model/YCB3S_data.R`'s
+`RecruitIndex`/`SplitObs`) previously meant *any* untagged fish first handled at an
+Oct-Dec fall netting. Some of these are genuinely age-0 (young-of-year), but some
+are older untagged fish (carryover from a prior season's recruitment, or
+long-established fish captured for the first time) mixed into the same netting
+event -- inflating recruit density and contaminating the S/L size-split likelihood
+(`n0`/`nL`, feeding `pLg`/`a1`) with fish whose size reflects more than one
+season's growth. Plan file:
+`.posit/assistant/plans/2026-09-23-1232-separate-yoy-recruits-from-carryover-untagged-fish-in-ycb-density-model.md`.
+
+**New reusable classifier: `model/RecruitYOYClassification.R`.** `classify_yoy_cohort(TL, min_n = 15)`
+fits `mclust::Mclust(TL, G = 1:2)` per pond x season cohort (mirrors the existing
+GIEL bimodal reporting table, `@tbl-giel-bimodal` in `PopulationMonitoring.qmd`,
+generalized into a function that can drive model inputs, not just reporting text)
+and `classify_yoy_df()` applies it grouped over a data frame. **BIC-preferred G
+alone is not a reliable gate:** two YCB cohorts (pond 1, sub-350mm juveniles only:
+FY2019 n=484, means 166/183mm; FY2022 n=245, means 210/260mm) are continuous,
+gap-free declines in counts that BIC nonetheless "explained" with two narrow
+Gaussians -- there is no real second mode. Two standard statistical gates were
+tried and rejected before settling on a direct, inspectable one:
+- **Ashman's D** (McLachlan & Peel 2000) passed both spurious cases (D = 3.0-4.7,
+  above the conventional D >= 2 threshold for meaningful mixture separation).
+- **Hartigan's dip test** (`diptest::dip.test`) correctly rejected both spurious
+  cases (p = 0.12, 0.71) but also failed to flag a genuinely bimodal cohort with a
+  small (8 of 58 fish), sharply separated upper cluster (FY2014, all-species/no
+  stage-filter test: p = 0.95) -- the dip test has low power against a small,
+  tight second cluster at these sample sizes.
+- **Adopted: an explicit gap check.** `gap_between_modes()` finds the largest gap
+  between adjacent *observed* TL values that falls between the two fitted
+  component means, and requires it to be both large relative to the cohort's
+  typical value-to-value spacing (`gap_ratio_min = 5`, i.e. the gap-to-median-spacing
+  ratio) and large in absolute terms (`gap_abs_min = 15` mm) before trusting a
+  2-component split. Verified across every case tested: real splits (FY2014,
+  and pond-1 FY2024/FY2025 sub-350mm juveniles) have ratios of 31-60 (absolute
+  gaps 31-62 mm); the two spurious BIC splits above have ratios of 1-3 (gaps 1-3
+  mm) -- clean separation between genuine and spurious cases at the chosen
+  thresholds.
+
+**`model/YCBSizeDensityEDA.qmd` reworked around this classifier.** New "Young-of-year
+classification" section (mirrors `@tbl-giel-bimodal`: per-FY mixture table + a
+histogram colored by YOY/carryover). Every downstream table/figure (recruit size
+by year, re-sighting-by-size, small-fish persistence, the cohort table) now uses
+YOY-classified fish only (`rec_all` = everything, `rec` = YOY-only, used
+everywhere else in the doc); the Imperial Ponds preview section applies the same
+per-pond x FY classification. **Densities and biomass are now reported per
+surface acre** (`data/BWPondAreas.csv`: YCB 2.6, IP1 8.8, IP3 14.2, IP4 8.6 acres)
+rather than as raw pond counts, making the YCB-derived relationships directly
+comparable to the IP ponds. On the EDA doc's own (adult-inclusive, no stage
+filter) recruit definition, every year now shows a real, gap-confirmed upper
+mode of true/likely-established adults (means 439-516 mm, well above the 350mm
+adult threshold) cleanly separated from the YOY mode -- a cleaner and more
+biologically sensible result than the earlier all-species BIC-only splits.
+Rendering required qualifying one `count()` call to `dplyr::count()` (loading
+`mclust` via the new classifier masks `dplyr::count`/`purrr::map`, the same
+known hazard already documented for `model/BWRobustDesign_data.R`).
+
+**Propagated into `model/YCB3S_data.R`.** `RecruitNFWG`'s untagged-juvenile query
+(already restricted to `stage_cap < 3L`, i.e. sub-adult/sub-350mm fish -- this is
+why its spurious/real cases above differ numerically from the EDA doc's
+adult-inclusive test) now classifies each pond x season cohort with
+`classify_yoy_df()` (new `RecruitYOYClassified` intermediate object) and keeps
+only `is_yoy == TRUE` rows before computing `n_tagged_juv`/`n0`/`nL`. The
+hand-maintained `data/BWNettingEvents.csv` counts (`RecruitCSV`) have no
+individual-level TL, only a per-event `MeanTL`, so they cannot be individually
+reclassified and are left as-is (a minor, un-reclassified component -- 7 rows
+total in the CSV). `rec_density`/`dens_std` continue to use `PondTable$Area`
+exactly as already implemented since the 2026-09-10 real-acreage rebuild; only
+the recruit *count* feeding it changed. `model/RecruitYOYClassification.R` added
+to the `BUILD_INFO$inputs` mtime guard; the reconciliation printout gained a new
+YOY-vs-carryover table by pond x FY. **Also fixed in passing:** 5 more
+unqualified `count()` calls in `YCB3S_data.R` were silently at risk of resolving
+to `mclust::count()` once the classifier script (which loads `mclust`) is
+sourced -- all qualified to `dplyr::count()`.
+
+**YCB-only (pond 1) rebuild result, m12 calendar (2026-09-23).** Impact is
+concentrated in 3 of 10 seasons (others' YOY/carryover split was 0 either because
+BIC preferred G=1, the gap check rejected a spurious G=2 split, or n < 15): FY2021
+lost 2 of 230 juveniles as carryover (negligible), **FY2024 lost 57 of 266 (209
+YOY remain, `rec_total` 366->309, `dens_std` 0.25->0.12)**, **FY2025 lost 73 of
+298 (225 YOY remain, `rec_total` 829->756, `dens_std` 0.77->0.66)** -- both
+confirmed by a real gap in the sorted TL data (FY2024: 181mm -> 241mm; FY2025:
+158mm -> 189mm). FY2019 (n=484) and FY2022 (n=245), the two cohorts that
+triggered the gap-check redesign, were correctly left as all-YOY once the final
+classifier was in place. `n0`/`nL` for the size-split model changed accordingly
+for FY2024/FY2025 (the removed carryover fish ranged 189-348mm, some crossing the
+300mm S/L break).
+
+**Bug fixed in `model/YCB3S_NIMBLE.R` while launching the refit.** `PONDS`/`CALENDAR`
+were unconditionally hardcoded at the top of the script (unlike `YCB3S_data.R`,
+which uses `if (!exists(...))`), so pre-setting `PONDS <- 1L` before sourcing the
+fit driver (the documented pattern for launching a single-pond fit) was silently
+ignored -- the script always loaded/fit the four-pond `_xyte` data file
+regardless. Fixed to `if (!exists("PONDS")) PONDS <- c(1L, 2L, 4L, 5L)` /
+`if (!exists("CALENDAR")) CALENDAR <- "m12"`, matching `YCB3S_data.R`'s
+convention. New runner `model/run_ycb_yoy_refit.R` sets `PONDS <- 1L` /
+`CALENDAR <- "m12"` then sources `YCB3S_NIMBLE.R`, for launching as a background
+job (`rstudioapi::jobRunScript("model/run_ycb_yoy_refit.R", workingDir = getwd(), importEnv = FALSE)`).
+
+**Refit launched 2026-09-23 (job `BAD9373E`, "YCB3S YOY-classified refit (YCB
+only, m12), retry"), writes `data/YCB3S_MCMC_m12.RData` / `model/YCB3S_traceplots_m12.pdf`.**
+The pre-YOY-classification fit (2026-09-08, job `FF04A722`, the working YCB-only
+m12 reference) was archived first as `data/YCB3S_MCMC_m12_preYOY.RData` /
+`model/YCB3S_traceplots_m12_preYOY.pdf`. Same model code as that fit (no-cB,
+shared-lp, centered-`eps_J`, real per-acre density). **On completion check:**
+`a1`/`pLg` (may steepen slightly now that two contaminated cohorts are cleaner),
+`dJ`/`eps_J` for FY2024/FY2025 (juvenile survival for those seasons may shift
+since some previously-"surviving-juvenile" fish are now correctly excluded from
+being counted as this season's S-stage recruits at all), posterior-predictive fit
+on `sp_nL` for FY2024/FY2025 in `model/YCB3S_validation.qmd` (re-render once
+complete), and `N_tag >= known alive` (should be unaffected -- untagged density
+inputs don't touch the tagged-fish likelihood).
+
+**Refit failed to converge (2026-09-23, job `BAD9373E` result).** `data/YCB3S_MCMC_m12.RData`:
+species-1 (XYTE) core parameters have severe Rhats (`dJ[1]` 8.8, `b_post[1,2]`
+16.9, `lpsiSL[1]` 11.4, `lpsiLA[1]` 11.1); GIEL (prior-only) and the size-split
+parameters (`a0`, `a1`, `g_eff`) converge fine. Per-chain means show chains 1
+and 2 agree with each other and with the pre-YOY reference fit (`dJ[1]` ~
+-2.6, `lpsiSL[1]`/`lpsiLA[1]` ~ -2.5, `sigma_phi[1]` ~ 0.56-0.57), while chain
+3 landed in a distinct alternate mode: `lpsiSL[1]`/`lpsiLA[1]` flipped
+positive (~+1.6 to +2.3, near-instantaneous S->L->A maturation), compensated
+by a much more negative `b_post[1,2]` (~-3.5 vs -1.2), a weaker `dJ[1]` (~-0.9
+vs -2.6), and larger `sigma_phi[1]`/`sigma_J[1]`. `eps_J` divergence
+concentrates at FY2019, FY2021, and especially **FY2024/FY2025 -- the two
+seasons whose recruit counts the YOY reclassification trimmed most (57 and 73
+fish removed)** -- consistent with a genuinely multimodal likelihood opened up
+by those cells becoming sparser, not a coding bug (individual tagged-fish
+staging and the netting-join likelihood are both untouched by the YOY filter;
+only the aggregate recruit-density/size-split covariates feeding `a0`/`a1`
+changed -- see the conversation of 2026-09-23 for the full trace of which
+data objects the classifier does and doesn't touch).
+
+**Anchored-inits diagnostic rerun (2026-09-23), to test whether chain 3's
+alternate mode is an avoidable mixing failure.** `model/YCB3S_NIMBLE.R`
+generalized: `DEFS_FILE` (default `"model/YCB3S_defs.R"`) and `DATA_FILE`/
+`OUT_FILE`/`TRACE_FILE` are now all `if (!exists(...))`-guarded and
+overridable before sourcing, and `DEFS_FILE` is propagated into the parallel
+cluster workers (`clusterExport`/`clusterEvalQ`) alongside `DATA_FILE`; this
+is a pure generalization; the pre-existing PONDS/CALENDAR pattern was
+preserved and default behavior is unchanged for every other caller. New
+`model/YCB3S_defs_tightinit.R` sources the real `YCB3S_defs.R` then overrides
+`make_3s_inits()`: species-1 (XYTE) `mu_phi`, `sigma_phi`, `dJ`, `b_post[1,1:2]`,
+`sigma_J`, `lpsiSL`, `lpsiLA` are redrawn tightly around the chain-1/2 basin
+above (small jitter, seed offset `+90000` so the 3 chains still start with
+some spread), `eps_raw[1,]` is seeded near the chain-1/2 `eps_J` trajectory by
+season, and `lphiA` is regenerated from the anchored `mu_phi` (same formula as
+the original function). Species 2 (GIEL, prior-only in this YCB-only build)
+is untouched. New `model/run_ycb_yoy_refit_tightinit.R` sets `PONDS <- 1L`,
+`CALENDAR <- "m12"`, `DEFS_FILE <- "model/YCB3S_defs_tightinit.R"`, and
+distinct `OUT_FILE`/`TRACE_FILE` (`data/YCB3S_MCMC_m12_tightinit.RData` /
+`model/YCB3S_traceplots_m12_tightinit.pdf`, so the non-converged `BAD9373E`
+output is left untouched for comparison) before sourcing `YCB3S_NIMBLE.R`.
+**Pre-launch check passed:** all 3 seeds' anchored inits landed within
+~0.1-0.15 of the target values (e.g. `dJ[1]` -2.48 to -2.70 across seeds vs.
+the wide original prior's `rnorm(2, -0.5, 0.2)`); a compiled-free `nimbleModel`
+build with seed 6173's inits reached a finite log-probability (-81,451) after
+the standard `repair_3s_inits()` `okU` repair loop, same mechanism used for
+every prior build. **Refit launched 2026-09-23, job `86A18C9A`
+("YCB3S YOY-classified refit, anchored inits diagnostic"), via
+`rstudioapi::jobRunScript("model/run_ycb_yoy_refit_tightinit.R", ...)`,
+writes `data/YCB3S_MCMC_m12_tightinit.RData` / `model/YCB3S_traceplots_m12_tightinit.pdf`.**
+Same 3 chains / 30k iter / 10k burn / thin 10 / seeds 6173/2948/8805 as every
+other YCB3S fit. **On completion check:** whether chain 3 now stays in the
+chain-1/2 basin (Rhat for `dJ[1]`/`b_post[1,2]`/`lpsiSL[1]`/`lpsiLA[1]` should
+drop from 8-17 toward the usual <=1.1-1.3 range if anchoring fixes the mixing
+failure); if chain 3 still drifts to the alternate mode despite starting in
+the reference basin, that would instead support a genuinely competing
+posterior mass (not just a bad-inits artifact), and the next step would be
+long single-chain diagnostics or a tighter prior on `lpsiSL`/`lpsiLA` to rule
+out the near-instant-maturation region as biologically implausible; also
+re-check `eps_J[1,8:9]` (FY2024/FY2025) specifically, and confirm
+`N_tag >= known alive` still holds regardless of outcome.
+
+**Anchored-inits result (job `86A18C9A`, checked 2026-09-24): confirms a bad-inits/mixing
+artifact, not a competing posterior mass — this is now the adopted YCB-only YOY-classified
+m12 fit.** All 3 chains stayed in the chain-1/2 basin: `dJ[1]` Rhat 8.8 -> 1.05,
+`b_post[1,2]` 16.9 -> 1.04, `lpsiSL[1]` 11.4 -> 1.01, `lpsiLA[1]` 11.1 -> 1.05 (point
+estimates; per-chain means for `dJ[1]`/`lpsiSL[1]`/`lpsiLA[1]`/`b_post[1,2]` agree within
+0.05 logit across chains 1-3, no alternate-mode chain). Overall max Rhat across all 571
+monitored nodes is 1.23, with only 36 nodes > 1.1, all in the usual nuisance families
+(`N_tag[1,56:86,2:3]`, `Tal[18,24,25]`, `RecJ[1,4]`, `r[1,4]` — recruitment/pool
+quantities in a mid-fit stretch, the same pattern seen in every prior YCB3S fit).
+`N_tag >= known alive` holds for all 120 months (0 violations at the 2.5% joint-posterior
+quantile). `eps_J[1,8]` (FY2024) = 0.14 (-0.39, 0.63) and `eps_J[1,9]` (FY2025) = 0.32
+(-0.09, 0.74) — both near zero with unremarkable CIs, no sign of the divergence that
+characterized job `BAD9373E`'s failed refit. Core parameter estimates (`dJ[1]` -2.72,
+`b_post[1,1]` -3.02, `b_post[1,2]` -1.24, `lpsiSL[1]` -2.49, `lpsiLA[1]` -2.58,
+`sigma_phi[1]` 0.55, `sigma_J[1]` 1.06) are nearly identical to the pre-YOY-classification
+reference fit (`data/YCB3S_MCMC_m12_preYOY.RData`: -2.70, -3.02, -1.23, -2.49, -2.60, 0.56,
+1.09) — the YOY reclassification (which removed 57 FY2024 and 73 FY2025 carryover fish
+from the recruit-density/size-split inputs only) did not materially move juvenile
+survival/maturation once mixing was fixed. **Adopted as the working file:**
+`data/YCB3S_MCMC_m12_tightinit.RData` / `model/YCB3S_traceplots_m12_tightinit.pdf` should
+be treated as the current reference YCB-only YOY-classified m12 fit going forward (the
+failed `data/YCB3S_MCMC_m12.RData` from job `BAD9373E` remains on disk but should not be
+used for inference). **Not yet done:** `model/YCB3S_validation.qmd` has not been
+re-rendered against this fit (it currently points at `../data/YCB3S_MCMC[_m12].RData` /
+`../data/YCB3S_data[_m12].RData` by the `calendar` param, not the `_tightinit`-suffixed
+files) — either copy/rename `_tightinit` outputs over the plain `_m12` files (after
+confirming no other consumer expects the failed `BAD9373E` fit under that name) or add a
+new `tightinit`-aware load path before re-rendering.
+
+**Posterior-predictive check on `sp_nL` (size split), tightinit fit, 2026-09-24.** Simulated
+`nL_sim ~ Binomial(n0, pLg)` from the posterior (`a0[1]`, `a1[1]`, `dens_std`) for all 9
+`SplitObs` seasons and computed a two-sided PPC p-value (`2*min(P(sim<=obs), P(sim>=obs))`,
+same convention as the `sp_nL`/netting-join checks reported in `model/YCB3S_validation.qmd`).
+**FY2024 and FY2025 -- the two seasons whose recruit counts the YOY reclassification trimmed
+(57 and 73 carryover fish removed) -- both now fit adequately: p = 0.084 (n0=309, nL_obs=0,
+predicted mean nL 3.3) and p = 0.142 (n0=756, nL_obs=0, predicted mean nL 2.9).** No evidence
+of misfit at the previously-flagged seasons. Two other seasons are flagged at p<0.05 with
+this fit: **FY2020 (p = 0.004; n0=2887, nL_obs=10, predicted mean nL 2.4 -- the largest
+recruit cohort on record, model under-predicts high-density suppression of the size split)**
+and **FY2026 (p = 0.013; n0=7, nL_obs=7, a small partial-season edge case where every fish
+measured happened to be >=300mm)**. This flagged-season set (FY2020, FY2026) differs from the
+"4 of 9 seasons p<0.05 (FY2019, FY2021, FY2022, FY2024)" reported in `YCB3S_validation.qmd`'s
+last render, which was against a pre-YOY-classification, non-anchored-inits build -- not
+directly comparable; a fresh full re-render of the validation report against this fit would
+be needed to update that section properly (see the "Not yet done" item above).
+
+---
+
+## Bulk-Harvested Untagged YOY vs. Individually-Tagged Recruits (2026-09-24)
+
+**Problem identified by BK.** Sometimes a very large fraction of a season's
+true young-of-year (YOY) cohort is captured in bulk at a fall netting and
+handled with only an aggregate count + mean TL, no individual PIT tags (BK:
+"a lot of recruits are captured, we only get a mean size and they aren't PIT
+tagged... either way, this group is the true YOY"). These bulk counts are
+hand-maintained in `data/BWNettingEvents.csv` (`HarvestedUntagged` +
+`ReturnedUntagged` + `MortsUntagged`, `Stage == "J"`, with a `MeanTL`) and
+already flow correctly into the recruit-density covariate (`rec_total`,
+`dens_std`) via `RecruitCSV`/`RecruitIndex` in `model/YCB3S_data.R` --
+that part was never broken. The bug BK caught was in the OTHER half of the
+recruit data, the individually-tagged fish handled at the SAME fall netting:
+**when the true YOY are bulk-processed instead of individually tagged, the
+individually-tagged "leftover" fish at that event are, almost by
+construction, established/carryover fish that finally got caught that year
+-- not recruits.** BK's exact case: YCB's Nov 2019 netting bulk-harvested
+2,782 untagged fish (mean TL 152mm, to Lake Mead) while separately handling
+52 individually-tagged fish (all TL 330-585mm, 28 of the "80 harvested"
+figure BK recalled were actually recaptures, harvested to Laughlin Lagoon) --
+none of the 52 are YOY, confirmed directly from `StudyBWNFWG` (min TL 330mm,
+far above any plausible age-0 size).
+
+**Root cause (two compounding issues in `model/YCB3S_data.R`'s
+`RecruitYOYClassified` step, both now fixed):**
+1. **Classify-order bug (Part A).** The code filtered individually-tagged
+   fish to `stage_cap < 3L` (TL < 350mm) *before* running
+   `classify_yoy_df()`'s Gaussian-mixture YOY/carryover classifier. For
+   FY2020 this truncated the 52-fish cohort down to just the 10 with TL
+   330-349mm -- below the classifier's `min_n = 15` cutoff, so it defaulted
+   ALL 10 to "YOY" (spuriously contaminating that season's size-split data
+   with `nL = 10` instead of 0, and explaining why FY2020 was the worst
+   posterior-predictive-check misfit reported in the 2026-09-24 tightinit-fit
+   PPC). **Fix:** classify on the FULL untagged first-capture cohort (any
+   TL), and apply the `stage_cap < 3L` filter only AFTER classification, when
+   computing `n_tagged_juv`/`n0`/`nL`. This alone also modestly corrects
+   FY2018 (95-fish cohort averaging 372mm: classifying the full cohort
+   correctly finds two established-fish modes at 278mm/438mm instead of
+   defaulting the pre-filtered 40-fish remainder to "all YOY"; `n_tagged_juv`
+   40->39, `nL` 6->5).
+2. **No absolute-size check when a bulk record exists (Part B).** Fixing
+   Part A alone was NOT sufficient for FY2020: classifying the full 52-fish
+   cohort (n=52 >= `min_n`) correctly fits a real two-mode mixture (343mm and
+   472mm, gap-validated), but the classifier's `is_yoy` label always goes to
+   the SMALLER of the two fitted modes by construction -- and 343mm is still
+   nowhere near that season's true 152mm bulk-harvested recruit mean, so it
+   was still being mislabeled as YOY. **Fix:** for any pond-season where the
+   bulk CSV record for that fall netting is DOMINANT over the
+   individually-tagged untagged cohort (`n_csv_bulk > n_tagged_raw`, computed
+   in new `BulkYOYSeasons`/`NettingCSV_bulk`/`TaggedCohortN` objects), (a) the
+   small-sample classifier default flips from "assume YOY" (the historical
+   default) to "assume not YOY" (via `classify_yoy_df()`'s new `default_col`
+   argument), AND (b) regardless of sample size, any classified-YOY cluster
+   is only trusted if its own fitted mean TL is genuinely small (`< CSV_SMALL_MAX`
+   = 250mm, the same threshold already used to treat bulk-CSV counts as
+   stage S) -- otherwise it is forced to non-YOY (`is_yoy = is_yoy &
+   !(has_bulk_csv & mu1 >= CSV_SMALL_MAX)`).
+   **A magnitude comparison (dominance), not "any bulk record exists," is
+   required for the trigger** -- an earlier draft of this fix used "any
+   `n_csv > 0`" and incorrectly zeroed out FY2017's real 113-fish
+   individually-tagged recruit cohort (a false trigger from an unrelated
+   7-fish incidental-mortality CSV row from the same netting operation, tiny
+   relative to the 126-fish individually-tagged cohort). The dominance
+   comparison (`n_csv_bulk > n_tagged_raw`) correctly excludes FY2017
+   (7 vs 126) while still catching FY2020 (2877 vs 52) and FY2023
+   (1000 vs 302); FY2024/FY2025 are flagged as dominant-bulk seasons too
+   (100 vs 273, 531 vs 338) but the override never fires for them anyway
+   since their own individually-tagged YOY clusters already have real, small
+   fitted means (well under 250mm) from the pre-existing per-fish YOY
+   reclassification work (2026-09-23 session).
+
+**Reusable classifier changes (`model/RecruitYOYClassification.R`).**
+`classify_yoy_cohort()` gained a `default_is_yoy` argument (replacing the
+hardcoded `TRUE` in the `n < min_n` branch only -- the `G == 1`/spurious-split
+branch is unchanged, out of scope for this fix). `classify_yoy_df()` gained a
+`default_col` argument naming a logical column (constant per group) supplying
+each group's `default_is_yoy`; omitting it preserves the old behavior
+(default `TRUE` for every group), so the two OTHER callers of this shared
+function (`model/YCBSizeDensityEDA.qmd`, lines ~63 and ~314, GIEL/RASU
+reporting-only classifications) are unaffected by this change.
+
+**Deferred (Part C, NOT implemented this pass).** BK separately noted the
+*magnitude* of a bulk record's `MeanTL` (e.g. 152mm vs. a hypothetical
+235mm) is itself density-dependent-growth evidence currently discarded once
+it clears the binary `< CSV_SMALL_MAX` gate ("the fact that they are only
+170 mm by the fall is an indication of the impact of density on juvenile
+growth"). A proposed follow-up: add a continuous
+`MeanTL_csv[j,y] ~ Normal(mu0 + mu1 * dens_std[j,y], sigma / sqrt(n_csv))`
+likelihood term using the handful of `BWNettingEvents.csv` rows with a
+`MeanTL` (FY2017 287mm/n=7, FY2020 152mm/n=2877, FY2024 119mm/n=100, FY2025
+132mm/n=531), pooled with the individually-classified YOY fish's own mean TL
+per season, to give the model a genuine continuous size-density relationship
+instead of the current binary S/L gate on bulk records. Explicitly deferred
+to a follow-up session; **not implemented, no code changed for this part.**
+
+**Rebuild result (YCB-only, m12 calendar, 2026-09-24).** Season-by-season
+`n_tagged_juv`/`n0`/`nL` before -> after (A+B combined; only 3 of 10 seasons
+changed, all others identical to the pre-fix/pre-YOY-classification build):
+- **FY2017 unaffected** (113/113/35, `pL_obs` 0.31) -- confirms the dominance
+  check correctly does NOT trigger here despite a small CSV record existing.
+- **FY2018:** 40/40/6 -> 39/39/5 (Part A only; modest).
+- **FY2020:** 10/2887/10 -> **0/2877/0** (Parts A+B; the season BK flagged --
+  `rec_total` unchanged at 2877/2887 depending only on whether the CSV bulk
+  count itself changed, which it didn't; only the individually-tagged
+  contamination is removed). `dens_std` for this season shifts slightly
+  (1.46 -> 1.37) purely from the small change in total recruit count feeding
+  the standardization, not from any change in the CSV data itself.
+- All other seasons (FY2019, FY2021-FY2026) identical to the pre-fix build.
+
+**Refit launched 2026-09-24, job `F0049FF1` ("run_ycb_bulkfix_refit.R"),
+via `rstudioapi::jobRunScript("model/run_ycb_bulkfix_refit.R", workingDir =
+getwd(), importEnv = FALSE)`, writes `data/YCB3S_MCMC_m12_bulkfix.RData` /
+`model/YCB3S_traceplots_m12_bulkfix.pdf`.** Reuses
+`model/YCB3S_defs_tightinit.R` (the anchored-inits variant that fixed job
+`BAD9373E`'s chain-3 mixing failure in the prior YOY-classification refit) via
+the new `model/run_ycb_bulkfix_refit.R` runner (`PONDS <- 1L`, `CALENDAR <-
+"m12"`, `DEFS_FILE <- "model/YCB3S_defs_tightinit.R"`), since the anchor only
+touches species-1 survival/maturation inits (`mu_phi`, `sigma_phi`, `dJ`,
+`b_post`, `sigma_J`, `lpsiSL`, `lpsiLA`, `eps_raw`) and not the size-split
+(`a0`/`a1`) submodel this data change actually affects. Same 3 chains /
+30k iter / 10k burn / thin 10 / seeds 6173/2948/8805 as every other YCB3S fit;
+expect ~50-70 min based on the tightinit fit's precedent. The current
+reference fit, `data/YCB3S_MCMC_m12_tightinit.RData` (built on the
+YOY-classified-but-NOT-bulk-fixed data), is left on disk unchanged for
+comparison -- it is NOT automatically superseded until this job's results are
+checked.
+
+**Bulkfix refit result (job `F0049FF1`, checked 2026-09-24, ~69 min; `data/YCB3S_MCMC_m12_bulkfix.RData`) -- adopted as the new reference fit, superseding `_tightinit`.**
+1. **Convergence: solid, no alternate-mode chain.** Per-chain means for
+   `dJ[1]`, `b_post[1,1:2]`, `lpsiSL[1]`, `lpsiLA[1]`, `sigma_phi[1]`,
+   `sigma_J[1]`, `a0[1]`, `a1[1]` agree within 0.01-0.26 across all 3 chains
+   (no split-mode signature like job `BAD9373E`'s failure). Point-estimate
+   Rhat: `a0[1]`/`a1[1]` 1.00 (n.eff ~4650-4850), `dJ[1]` 1.00 (n.eff 89),
+   `b_post[1,1]` 1.01, `b_post[1,2]` 1.03, `sigma_phi[1]`/`sigma_J[1]` 1.00,
+   `lpsiSL[1]` 1.07. **`lpsiLA[1]` Rhat 1.20 (n.eff 138)** is the one node
+   worse than the tightinit fit's 1.05 -- per-chain means (-2.90, -2.71,
+   -2.65) still agree closely, so this reads as slow mixing on an
+   already-thin-data node (only 3 juvenile stage re-observations at YCB), not
+   a real disagreement between chains. 134 of 561 non-NA nodes have Rhat >
+   1.1, all in the standard `N_tag`/`Tal` known-alive-pin floating-point
+   artifact family (verified: the flagged nodes are exactly the usual
+   mid-2022/2023 `N_tag[1,·,2:3]` and `Tal[18],[24],[25]` pattern seen in
+   every prior YCB3S fit).
+2. **`N_tag >= known alive` holds for all 120 months, 0 violations** (checked
+   via the joint-posterior-quantile method: per-iteration sum across the 3
+   stages, then the 2.5% quantile across all 3 chains' pooled draws --
+   the correct method per this project's standing convention, not the
+   marginal-per-stage shortcut that has produced false positives before).
+3. **`a1[1]` moved substantially more negative as predicted:** -1.963
+   (-2.426, -1.527) [tightinit] -> **-3.439 (-4.192, -2.739)** [bulkfix] --
+   confirms the expectation that removing FY2020's spurious `nL = 10` (at
+   that season's `dens_std` ~1.46, the single highest-density `SplitObs` row)
+   strengthens the density -> P(TL>=300mm) slope, since the old fit was being
+   pulled toward a nonzero large-fish fraction at the highest-density point
+   by a data artifact. `a0[1]` shifted correspondingly (-4.317 -> -5.623).
+4. **`sp_nL` posterior-predictive check: all 9 `SplitObs` seasons now fit
+   adequately (no p < 0.05 flags), a clean improvement over the tightinit
+   fit's 2 flagged seasons (FY2020 p=0.004, FY2026 p=0.013).** Season 4 (the
+   corrected FY2020 cell, `n0=2877`, `nL_obs=0`) now predicts mean `nL ~
+   0.09-0.10`, matching the observed 0 almost exactly -- the previously
+   worst-misfitting season is resolved. Season 10 (FY2026 partial-season
+   edge case, `n0=7`, `nL_obs=7`) improved from p=0.013 to p=0.358, no longer
+   flagged, though still the least certain cell given `n0=7`.
+5. **Survival/maturation parameters essentially unchanged from tightinit**,
+   confirming this data change (recruit-density/size-split inputs only) does
+   not touch the tagged-fish survival likelihood, as expected: `dJ[1]`
+   -2.720 -> -2.711, `b_post[1,1]` -3.019 -> -2.991, `b_post[1,2]` -1.242 ->
+   -1.222, `sigma_phi[1]` 0.553 -> 0.550, `sigma_J[1]` 1.061 -> 1.065,
+   `lpsiSL[1]` -2.486 -> -2.259 (small shift, within CI overlap),
+   `lpsiLA[1]` -2.582 -> -2.752 (small shift, within CI overlap despite the
+   Rhat noted above).
+6. **Decision: `data/YCB3S_MCMC_m12_bulkfix.RData` / `model/YCB3S_traceplots_m12_bulkfix.pdf` is now the reference YCB-only YOY-and-bulk-corrected m12 fit**, superseding `_tightinit` (which remains on disk for comparison but should not be used for further inference). **Part C (continuous `MeanTL`-vs-density likelihood term) is kept as a potential future endeavor if more years of bulk-CSV data become available** -- not implemented now.
+   **Clarification (2026-09-24, BK question):** individual TL is NOT limited to a mean for every YOY cohort -- only the hand-maintained bulk-CSV records (`data/BWNettingEvents.csv`'s `HarvestedUntagged`/`ReturnedUntagged`/`MortsUntagged` rows, which are aggregate counts with a single `MeanTL` and no individual fish) are mean-only. Any recruit that was individually tagged and measured -- including the full FY2017 cohort (126 fish, individually classified via `classify_yoy_df()` into 114 YOY / 12 carryover, each contributing its own `TL` to the S/L 300mm threshold split) -- already uses per-fish TL, exactly like every other individually-tagged season. FY2017's own bulk-CSV record is a tiny `n_csv_bulk = 7` incidental-mortality count, far too small to trigger the dominance override (correctly confirmed in the 2026-09-24 bulk-fix work: "FY2017 unaffected (113/113/35...) -- confirms the dominance check correctly does NOT trigger here"). Part C would only ever apply to the handful of pond-seasons that are bulk-only (no individually-tagged fish at all, or where bulk dominates): FY2017 (n=7, immaterial), FY2020 (n=2877), FY2024 (n=100), FY2025 (n=531).
+7. **Not yet done:** `model/YCB3S_validation.qmd` has not been re-rendered against this fit -- it still points at the plain `../data/YCB3S_MCMC[_m12].RData` files by the `calendar` param, not any `_tightinit`- or `_bulkfix`-suffixed file. A full re-render (copying/pointing at the `_bulkfix` files) is the natural next step if an updated validation report is wanted, particularly to refresh the size-split PPC section (§4) and the juvenile-cohort comparison (§3.2) against the corrected FY2018/FY2020 recruit inputs.
+
+**`data/BWNettingEvents.csv` folded in `data/UntaggedBackwaterCaptures.xlsx` (found already
+done, 2026-09-24 session).** The redevelopment/fold-in question left open above was
+resolved by adding rows directly to `data/BWNettingEvents.csv` (now 26 rows, up from the
+original YCB-only set): a new YCB row (2022-11, stage A, 9 fish harvested/transferred,
+previously untracked) plus the first-ever IP1/IP2/IP5/IP6 rows (19 new rows total; IP3/IP4
+still have none). Each new row's Notes cites the cross-check against
+`data/UntaggedBackwaterCaptures.xlsx` and/or `StudyBWNFWG` from the "Untagged Backwater
+Captures Cross-Check" section above, including the two resolved ambiguities (IP6
+2021-02-04's date and count, IP2 2023-12-12's non-overlapping 106 untagged + 301 tagged
+groups).
+
+**YCB-only `data/YCB3S_data_m12.RData` rebuilt (2026-09-24) to pick up the CSV update.**
+`RecruitIndex`/`SplitObs` (the recruit-density and size-split covariates) are **byte-for-byte
+unchanged** -- the only new YCB row is stage "A" (adult), which `NettingCSV`/`RecruitCSV`
+never touch (both filter to `Stage == "J"`). The sole effect is on `Netting`/`remU_arr`:
+season 7 (FY2023), stage 3 (adult) gained `harvU_csv` 0->9, raising that cell's known
+untagged-adult removal floor `remU` 19->28 -- a `dconstraint(U >= remU)` lower bound, not a
+survival-relevant covariate. **Given this, no refit was launched**; the current reference
+fit (`data/YCB3S_MCMC_m12_bulkfix.RData`, adopted above) is still valid and was not
+superseded. Re-run `model/YCB3S_data.R` (`MODEL_PONDS <- 1L; CALENDAR <- "m12"`) before any
+future fit that needs this 9-fish correction reflected, or refit via
+`model/run_ycb_bulkfix_refit.R` (writes to the same `_bulkfix` file) if the untagged-pool
+adult floor for FY2023 ends up mattering to a specific question.
+
+**`model/YCBSizeDensityEDA.qmd` reworked to match `YCB3S_data.R`'s bulk-dominance
+classification (2026-09-24).** The EDA doc's own `rec_all` classification previously used
+only the plain per-FY mixture model (no bulk-dominance override), so it disagreed with the
+production data build at FY2020 (the doc would have shown a spurious small-mode "YOY" split
+of the 52 individually-tagged, all-established fish there). Added to the doc's `setup`
+chunk: `netting_csv_bulk`/`tagged_cohort_n`/`bulk_dom_fy` (mirroring
+`NettingCSV_bulk`/`TaggedCohortN`/`BulkYOYSeasons` in `model/YCB3S_data.R`) and the FY2020
+individually-measured subsample (`fy2020_subsample`, from
+`data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx`, 730 fish, mean 151.7 mm). `rec_all`'s
+`classify_yoy_df()` call now passes `default_col` and applies the same `mu1 >= CSV_SMALL_MAX`
+cap as the production build; re-rendering confirms the doc's `tbl-yoy` now reproduces
+`YCB3S_data.R`'s reconciliation printout exactly (FY2018 39/56, FY2019 483/16, FY2020 0/52,
+FY2023 282/20, etc.). `rec_fy`'s density now adds the bulk CSV count on top of measured YOY
+fish (`rec_total = n_rec + n_csv`, matching the model's actual `rec_total` covariate) instead
+of reporting only individually-measured fish, which previously showed FY2020 as near-zero
+density instead of the true ~2,877-fish recruitment event. New "Bulk-processed young-of-year
+cohorts" subsection (table of all YCB bulk J-stage records with dominance/subsample flags,
+plus a histogram comparing the FY2020 subsample to that season's individually-tagged
+carryover fish) documents the mechanism for report readers. Conclusions section gained two
+new points (8, 9) describing the bulk-cohort handling and flagging the still-deferred Part C
+(continuous `MeanTL`-vs-density likelihood term) as out of scope for this pass. All figures/
+tables downstream of `rec_fy` (`tbl-rec`, `fig-size-vs-n`, `tbl-cohort`) were updated to
+distinguish measured-only size statistics (blank for FY2020) from the bulk-inclusive density
+total. Verified: full `quarto render YCBSizeDensityEDA.qmd` completes cleanly, 0 CRLF
+introduced.
+
+**Deferred (Track 2, not implemented this pass): Bonytail/GIEL.** The existing
+2-stage joint robust-design model has no density covariate for GIEL (2026-09-10
+decision: "no density signal to fit... too sparse/skewed for a growth-density
+submodel"), so there is no model input to correct yet. `@tbl-giel-bimodal`'s
+reporting numbers in `PopulationMonitoring.qmd` and `WildHatchedTab`/recruit
+counts in `BONYIPMDiagnostics.qmd` were **not** touched -- `RecruitYOYClassification.R`
+could be pointed at the GIEL pond x FY cohorts later if BK wants those recruit
+counts corrected too, but this was explicitly out of scope for this pass.
+
+**Not yet done:** the four-pond `_xyte` build (`data/YCB3S_data_xyte_m12.RData` /
+`data/YCB3S_MCMC_xyte_m12.RData`, v12, terminal per the 2026-09-10 decision to
+stop extending the joint model) was **not** rebuilt or refit with the YOY
+classifier -- its data file is now stale relative to `model/YCB3S_data.R` and
+`model/RecruitYOYClassification.R` (the mtime guard in `YCB3S_NIMBLE.R` will
+correctly refuse to fit it without a rebuild). Per the 2026-09-10 decision, future
+single-pond work should continue to fork from `MODEL_PONDS <- 1L` rather than
+reviving the four-pond joint model.
+
+---
+
 ## Bonytail (GIEL) Model Structure Assessment (2026-09-10)
 
 Spot-check of whether the YCB three-stage density-dependent architecture should be ported to the three GIEL ponds (IP2, IP5, IP6), or whether the existing joint 2-stage `BWRobustDesign` model (already split at `StageTL` = 250 mm for GIEL) is the right base. Method: built scratch NIMBLE-style inputs via `model/YCB3S_data.R` with `MODEL_PONDS <- c(3L, 6L, 7L)` (IP2/IP5/IP6), `StageBreaks$GIEL = c(200, 250)`, `CALENDAR = "m12"`, saved to `data/GIEL_scratch_data.RData` (not part of the pipeline; safe to delete).
@@ -240,6 +708,25 @@ larval-size value before defaulting to an uninformed `t0` in any future VBGF wor
 project's species** — it's easy to wrongly assume none exists (as the first draft of this
 model did).
 
+**BONY spawning timing reference and hatch-size restatement (2026-09-23, BK, unpublished/unlocated
+source).** Most reports and articles citing lower Colorado River bonytail spawning timing quote
+Jonez, A., and R. C. Sumner. 1954. *Lakes Mead and Mohave Investigations.* Nevada Fish and Game
+Commission Final Report, D-J Project F-1-R, 186 pp. (Unpublished) — observed ~500 individuals
+spawning in May. BK could not locate the original document to verify directly; treat as a
+secondary/frequently-cited attribution, not a document on hand (no PDF exists in `documents/`,
+so no `Key Reference Documents` row was added). Bonytail spawn later in the upper Colorado River
+basin, likely temperature-driven: Lake Mohave (YCB) water is warmer than the upper basin, and
+IPCA water is warmer still than Lake Mohave. **Decision: use May 1 as the standing spawn-date
+anchor for wild larval production** at both YCB and IPCA going forward (relevant to the BONY
+size-tied maturation hazard design plan above and any future age-anchored growth work). BK
+initially restated hatch size as 5.5-6.5 mm TL in this conversation ("as stated before"),
+conflicting with the Hamman (1982) value already anchoring `L0` in this model's fit immediately
+above (mean 6.8 mm, range 6.5-7.5 mm). **Resolved same day: BK confirmed Hamman (1982) is
+authoritative** ("more relevant for lower Colorado River") — `L0 ~ Normal(6.8, 0.25)` mm in
+`data/GIEL_VBGF_AgeLength.RData` is correct as fit and needs no change; the 5.5-6.5 mm figure
+should not be used. Standing values going forward: **hatch length 6.8 mm TL (Hamman 1982),
+spawn-date anchor May 1 (Jonez and Sumner 1954)**.
+
 **Shared-K, release-anchored revision (2026-09-14, BK hypothesis, same day) — current model.**
 BK hypothesized that stocked (captive-reared) and wild-recruit bonytail actually grow at the
 *same rate* once both are in the pond, and that the L0-anchored model's large origin effect
@@ -303,6 +790,71 @@ when a captive-rearing or hatchery phase precedes release, do not assume one con
 release when release size/date are known, and test for a residual origin effect only after
 that fix, ideally using any available same-pond/same-time overlap between stocked and wild
 individuals as a direct check before trusting a model-based origin comparison.
+
+---
+
+## BONY Fixed-Mean Age-0 (YOY) vs. Holdover Size-at-Netting Priors, IP2/IP5/IP6 (2026-09-23)
+
+Follow-up to the "BONY spawning timing reference and hatch-size restatement" note above.
+BK confirmed this pathway is **BONY/IPCA-specific**: it does not extend the RASU/YCB
+density-dependent approach (`model/YCBSizeDensityEDA.qmd`, `RecruitYOYClassification.R`'s
+free 2-component `mclust` fit) because there is not enough BONY data to support a
+density-dependent growth/survival submodel, and the May 1 spawn-date anchor (Jonez and
+Sumner 1954) applies only to BONY at IPCA. Because of that, BK opted for **fixed**
+size-at-age means/SDs (from the existing shared-K, release-anchored VBGF posterior,
+`data/GIEL_VBGF_AgeLength.RData`'s `al_final`) rather than a freely-fit mixture, with only
+the mixing proportion left free — expecting little conflict between growth-model
+predictions and observed netted sizes given how data-poor IPCA is.
+
+**`model/GIEL_IP2_FixedMeanConflictCheck.R`** (name retained from the original IP2-only
+request; scope is all three GIEL ponds) tests that expectation before any classifier is
+built on top of it. For each untagged fall-netted (Oct-Dec) GIEL recruit candidate at IP2/
+IP5/IP6 (same candidate definition as `GIEL_VBGF_AgeLength.R` step 2: no known stocking
+year class, first physical capture, measured TL — 948 fish across 14 pond x netting-event
+groups, Nov 2017-Dec 2023), fixed age-0 and one-year-old-holdover TL predictions are
+computed via posterior-predictive simulation (fresh pond-year deviation `v ~ N(0,
+sigma_v)` plus residual `sigma`, same recipe as the original prior table) anchored to that
+event's actual median netting date, May 1 (age-0) and May 1 of the prior year (holdover).
+Two diagnostics:
+1. **Per-event z-check:** hard-assign each fish to its nearer fixed component, then
+   `z = (obs_mean - pred_mean) / (pred_sd / sqrt(n_assigned))`; flag `|z| > 2`.
+2. **Extreme-residual fish:** flag individuals with `min(|z0|, |z1|) > 3` (fit neither
+   component).
+
+**Key asymmetry built into the interpretation:** the holdover anchor is calibrated for
+exactly age 1 (~1.6 yr at a typical December netting), but the untagged-recruit pool can
+include genuinely older fish (age 2, 3, ...) that simply evaded capture before — VBGF
+growth is decelerating but still positive at these ages, so those fish are *expected* to
+run larger than the age-1 anchor. A positive-direction flag on a "Holdover" group is
+therefore annotated as consistent with ordinary multi-age mixing, not a growth-model
+conflict; a negative-direction holdover flag, or any age-0 flag, is the more informative
+signal and is labeled "POSSIBLE CONFLICT" in the output (`EventZCheck$interpretation`).
+
+**Results (2026-09-23 run):** 7 of 948 fish (all Pond 6, TL 421-461 mm, all far above even
+the holdover anchor) are extreme-residual outliers — consistent with multi-year holdovers
+at the pond with the least netting/harvest pressure, not a data problem. Of 27 event x
+assigned-class cells, 9 were flagged by the z-check, but **4 of those 9 are the
+expected/benign kind** (Holdover groups running larger than the age-1 anchor: Pond 6
+2019-12/2021-12/2022-12/2023-12, obs. means 321-357 mm vs. predicted ~292-295 mm). **5 are
+labeled POSSIBLE CONFLICT** and worth a closer look: Pond 2 2018-12 and 2019-12 holdover
+groups run *smaller* than the age-1 prediction (263 vs. 297; 283 vs. 294 — modest, n=9/89);
+Pond 2's largest event, 2023-12 (n=301), has age-0 fish averaging 129 mm vs. a 163 mm
+prediction — a real, tight-CI gap (this is the most statistically confident conflict
+signal in the dataset given its sample size); and two small-n (6, 25 fish) Pond 5 age-0
+groups (2018-12, 2019-12) run *larger* than predicted (221 vs. 168; 187 vs. 160). No
+across-the-board pattern (e.g. all age-0 too small, or all one pond) emerged — the
+flagged cells are a mix of directions and ponds, consistent with BK's expectation of
+limited but not zero conflict. **Not yet resolved or acted upon** — this script is a
+screening pass; per the design conversation, a full parametric-bootstrap goodness-of-fit
+test was deliberately deferred unless a specific event looked borderline enough to warrant
+it (Pond 2 2023-12 is the strongest candidate for that follow-up, given its size and tight
+CI). Companion figure `model/GIEL_IP2_FixedMeanConflictCheck.png` (histograms with both
+fixed component densities overlaid, faceted by pond x event) supports these numbers
+visually. Output saved to `data/GIEL_IP2_FixedMeanConflictCheck.RData`
+(`EventFixedPriors`, `FishClassified`, `EventZCheck`, `ExtremeResidualFish`). No fixed-mean
+classifier itself has been built yet — this is strictly the pre-check BK asked for before
+deciding how the priors should be consumed (fixed means with only mixing-proportion free
+was the leading option discussed, per the 2026-09-23 conversation log).
 
 ---
 
@@ -454,6 +1006,42 @@ backwater's stocked cohorts.
 
 ---
 
+## Untagged Backwater Captures Cross-Check and YCBSizeDensityEDA Redevelopment (planned, 2026-09-24)
+
+**New data files, not previously known to this project (confirmed by search of `AGENTS.md`/`model/`/`*.qmd`/`*.R` -- zero prior hits).**
+- **`data/UntaggedBackwaterCaptures.xlsx`** (23 rows, `Sheet1`: `Date`, `Species`, `Backwater`, `Count`, `Transferred`, `Comment`) -- a broader, hand-maintained log of untagged-fish capture/release/harvest events across **all** backwaters (YCB, IP1, IP2, IP5, IP6), XYTE and GIEL, 2017-2024. This is a superset in scope of the existing `data/BWNettingEvents.csv`, which per its own documented scope is **YCB rows only**.
+- **`data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx`** (`LakeMeadFH` sheet: 730 individually measured fish, `TL (mm)`, `ADD DATE` 2019-11-06, all `Hoop Net`, transferred to Lake Mead Hatchery 2019-11-07; `Transfer Record` sheet: hatchery stocking manifest, confirms lot of 2782 fish, "N = 730 of the fish had left pelvic fin removed for gene[tics]"). This is an **individually-measured subsample (730 of 2782, ~26%) of the FY2020 YCB bulk-harvest cohort** already recorded as a `MeanTL`-only aggregate in `BWNettingEvents.csv` (2019-11 row, `HarvestedUntagged = 2782`, `MeanTL = 152`). Subsample mean 151.7 mm (SD 21.3, range 100-220 mm) matches the recorded aggregate mean (152 mm) almost exactly -- a good, representative subsample suitable for an actual histogram rather than a single mean/SD summary.
+
+**Cross-check against existing project data (`data/BWNettingEvents.csv` and its derived `NettingCSV_bulk`/`RecruitCSV` objects in `model/YCB3S_data.R`, which currently cover pond 1 = YCB only):**
+
+| Backwater | New-file rows | Status |
+|---|---|---|
+| YCB (XYTE) | 2019-11-06 (2782, harvested, avg 152mm) | Matches `BWNettingEvents.csv` 2019-11 row exactly. |
+| YCB (XYTE) | 2022-11-02 (1000, not transferred) | Matches `BWNettingEvents.csv` 2022-11 row exactly. |
+| YCB (XYTE) | **2022-11-02 (9, transferred = yes)** | **Not in `BWNettingEvents.csv`** -- a small additional untagged removal on the same date as the 1000-fish row, currently untracked. |
+| YCB (XYTE) | 2023-11-14 (100, not transferred) | Matches `BWNettingEvents.csv` 2023-11 row (MeanTL 119mm from a different source, not in this sheet). |
+| YCB (XYTE) | 2024-10-22 (531, avg 132mm) | Matches `BWNettingEvents.csv` 2024-10 row exactly (count and MeanTL both). |
+| YCB (XYTE) | *(none in new file for 2016-10 or 2017-10)* | `BWNettingEvents.csv`'s two small mortality-only rows (7 and 2 morts) are not in this sheet -- expected, different bookkeeping purpose (this sheet tracks live releases/harvests, not incidental morts). Not a discrepancy. |
+| **IP1 (XYTE)** | **2018-12-14 (12, <150mm); 2019-05-20 (7, <100mm)** | **Entirely new** -- `BWNettingEvents.csv` has zero IP rows, so IP1's untagged-recruit count in `RecruitCSV`/`RecruitIndex` (`model/YCB3S_data.R`) is currently always 0. Small numbers (19 fish total) but a real, previously-missing contribution. |
+| **IP2 (GIEL)** | **13 rows, 2017-2024, summing to 3,373 untagged fish** (FY2017 799, FY2018 1,904, FY2019 383, FY2020 178, FY2021 3, FY2024 106) | **Entirely new and substantial.** No GIEL pond has ever had bulk-untagged recruit counts in this project -- the 2026-09-10 "GIEL Model Structure Assessment" conclusion that "recruit density [is] too sparse/skewed for a growth-density submodel" (based only on individually-tagged NFWG juveniles) did not have this data and should be **revisited** once it is incorporated; FY2017-FY2018 alone (2,703 fish) dwarfs anything previously counted as GIEL recruitment. |
+| **IP5 (GIEL)** | 2019-12-04 (2, avg 119mm) | New, but trivial in size. |
+| **IP6 (GIEL)** | 2021-02-04 (10); 2021-12-14 (23, avg 144mm) | New; see data-quality flag below on the first row. |
+
+**Two data-quality ambiguities -- both resolved 2026-09-24 by cross-referencing `StudyBWNFWG` (BK's proposed tests, confirmed against the tagged-fish database):**
+1. **IP6, 2021-02-04 -- resolved, NO date change to December.** BK initially suspected the date should be `2021-12-04` (a "1" accidentally dropped from the month). Checked: no NFWG GIEL event exists at IP6 anywhere in Oct-Dec 2021 matching either the "10 escaped" or "23 tagged at 322mm" detail (the only Dec 2021 IP6 event is the already-known, unrelated 2021-12-14 row, different fish/sizes). Instead, `StudyBWNFWG` has an IP6 GIEL event on **2021-02-05** (one day after the spreadsheet's `2021-02-04`, an ordinary field-date-vs-database-date offset, not a data error) with **exactly 23 newly-tagged (`FirstRecord == "yes"`) fish averaging 322.3 mm TL** -- matching "23 others were tagged with an average of 322 mm TL" almost exactly (n and mean both). **Conclusion: keep the original February date (BK's Excel edit to `2021-12-04` should be reverted/not used); `Count = 10` stands as-is** -- a real, additive count of untagged escapees with no NFWG record at all (they were never tagged), safe to use in any recruit tally without double-counting.
+2. **IP2, 2023-12-12 -- resolved, not a subset/overlap issue.** `StudyBWNFWG` shows 301 newly-tagged GIEL from this event, mean TL 128.8 mm -- matching "the newly tagged fish were 128mm" almost exactly. This is *more* than 106, not fewer, so BK's proposed conditional ("if fewer than 106, treat 106 as the tagged+untagged total") does not apply. **Conclusion: NFWG's 301 tagged fish and the spreadsheet's 106 untagged fish are two separate, non-overlapping groups from the same event** -- `Count = 106` is a real, additive untagged-recruit count, safe to add to NFWG's 301 without double-counting.
+
+**Net effect: neither ambiguity is a real data conflict, both counts (`10` at IP6 2021-02-04/05, `106` at IP2 2023-12-12) are confirmed additive to what's already in `StudyBWNFWG`/`RecruitNFWG`, clearing the way for `data/UntaggedBackwaterCaptures.xlsx` to be incorporated into the recruit-density covariates without a special-case exclusion for either row.**
+
+**Redevelopment plan for `model/YCBSizeDensityEDA.qmd` (not yet implemented, per BK's direction to keep as a documented next step):**
+- Rebuild the recruit-size figures/tables around the now-finer three-way split established this session: (1) individually-tagged-and-measured YOY (per-fish TL, classified via `classify_yoy_df()`), (2) bulk-untagged with only an aggregate `MeanTL` (the `NettingCSV_bulk`/dominance-override mechanism from the 2026-09-24 bulk-fix work), and (3) bulk-untagged **with an individually-measured subsample available** -- a new third category this file's redevelopment should introduce, since it changes what can be plotted.
+- For any FY/pond where a `MeanTL`-only bulk record has a **matching individually-measured subsample** (currently known: YCB FY2020, 730 fish from `data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx`), add the subsample's histogram to that FY's recruit-size figure alongside (not replacing) the individually-tagged fish already plotted -- this gives a real distribution instead of just a mean/SD annotation for that season. Check `data/UntaggedBackwaterCaptures.xlsx`'s `Comment` column for other seasons that mention a measured sub-count (e.g. IP2 2017-05-17 "41 of the 191 were measured, averaged 34.17mm, min 27 max 47"; IP2 2017-11-28 and 2018-03-28 both give gear-specific sub-means/breakdowns) -- these are coarser than a full per-fish subsample (no raw individual TLs, just a gear-stratified sub-mean) but still richer than a single pond-wide mean and could be represented as a small multi-component summary rather than a full histogram.
+- Extend the underlying data build to read `data/UntaggedBackwaterCaptures.xlsx` (once the two ambiguities above are resolved with BK) alongside or in place of `data/BWNettingEvents.csv` for any pond/season not already covered, particularly IP1 and the three GIEL ponds.
+- **Any GIEL-facing change should trigger a re-examination of the 2026-09-10 "no density signal" decision** for the joint robust-design model, since that conclusion was drawn without this recruit data.
+- Scope question for BK: does this redevelopment fold `data/UntaggedBackwaterCaptures.xlsx` into `data/BWNettingEvents.csv` as the single source (converting units where needed, e.g. this sheet's `Count`/`Comment` free text vs. `BWNettingEvents.csv`'s structured `HarvestedUntagged`/`ReturnedUntagged`/`ReturnedInPool`/`MortsUntagged`/`MeanTL` columns), or are the two kept as separate inputs? Not decided.
+
+---
+
 ## Open TODOs
 
 - **UNM genetics-database collection table (requested 2026-09-17, not yet built).** The UNM/Dowling-lab bonytail parentage summary (`data/UNM_GIEL_ParentageSampling.csv`, from a 2026-09-17 email from Megan Osborne) only has coarse pond/year/stage/N counts, which produced an inconsistent, hard-to-interpret comparison against our NFWG-derived first-tagged-recruit counts (`output/UNM_vs_NFWG_GIEL_RecruitComparison.csv`) -- most likely because UNM samples larval/juvenile fish in the same season they are produced (seine/net sampling, no PIT tag required), while our NFWG database only gains a record once a fish is physically captured *and* large enough to tag, sometimes a year or more later. BK wants a **simplified table pulled from the genetics database itself** (which should hold every sample collection event, including larvae/juveniles with no PIT tag, with actual collection dates rather than just a summary year) so collection timing can be reconciled properly against NFWG/PIT records instead of guessing at a lag. Not yet started: no script, no file, no schema. When picked up, this should probably live alongside the other genetics reference data (see `Yuma_*_repro_counts_PIT.csv` / `IP_*_repro_counts_PIT.csv` in `Key Data Files`) and should get its own row in the `Key Data Files` table plus a `Key R Objects` entry once built.
@@ -593,6 +1181,7 @@ When a request touches one of the topics below, **read the corresponding markdow
 | `KnownSurvivalPlotYuma.png` | PopulationMonitoring.qmd | Known survivors over time – Yuma, by sex. Dotted vertical lines with `-n` labels mark dates when known survivors were removed via transfer (see `TransferReductionSummary`). |
 | `KnownSurvivalPlotIPXYTE.png` | PopulationMonitoring.qmd | Known survivors over time – IP XYTE, faceted by pond. Same transfer-date annotations as above, per panel. |
 | `KnownSurvivalPlotIPGIEL.png` | PopulationMonitoring.qmd | Known survivors over time – IP GIEL, faceted by pond. Same transfer-date annotations as above, per panel. |
+| `IPGIELRecruitSizeHist.png` | PopulationMonitoring.qmd | Three-panel stacked histogram of Bonytail recruit TL at first capture (all / ≥90 DAL / FY2024 survivors) by pond (IP2, IP5, IP6) and capture FY (Oct–Dec). Exported at 8×11 in. |
 | `YumaEstimatePlot.png` | BWMarkRecaptureEstimates.R | Annual mark-recapture estimates – Yuma |
 | `IPXYTEEstimatePlot.png` | BWMarkRecaptureEstimates.R | Annual mark-recapture estimates – IP XYTE, faceted |
 | `IPGIELEstimatePlot.png` | BWMarkRecaptureEstimates.R | Annual mark-recapture estimates – IP GIEL, faceted |

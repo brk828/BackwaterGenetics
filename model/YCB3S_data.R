@@ -34,6 +34,7 @@ packages(lubridate)
 packages(tidyr)
 packages(stringr)
 packages(readr)
+source("model/RecruitYOYClassification.R")
 
 load("data/ReportingData.RData")
 
@@ -305,13 +306,13 @@ ContactFishWeeks <- StudyBWContacts |>
   mutate(t = prim_floor(Date), k = week_of_month(Date)) |>
   filter(!is.na(t)) |>
   distinct(pond, t, k, PITIndex) |>
-  count(pond, t, k, name = "n_fish")
+  dplyr::count(pond, t, k, name = "n_fish")
 
 KnownAliveMonth <- Fish |>
   select(pond, entry_t, end_t, MaxScanDate) |>
   cross_join(Primary |> select(t, month_start)) |>
   filter(entry_t <= t, end_t >= t, !is.na(MaxScanDate), MaxScanDate >= month_start) |>
-  count(pond, t, name = "known_alive")
+  dplyr::count(pond, t, name = "known_alive")
 
 WeekScreen <- expand_grid(pond = 1:N_POND, t = 1:T_PRIM, k = 1:N_SEC) |>
   mutate(avail = eff_wk[cbind(pond, t, k)]) |>
@@ -379,7 +380,7 @@ Detections <- StudyBWContacts |>
   distinct(fish, t, k)
 
 y_mat <- matrix(0L, N_FISH, T_PRIM)
-det_counts <- Detections |> count(fish, t)
+det_counts <- Detections |> dplyr::count(fish, t)
 y_mat[cbind(det_counts$fish, det_counts$t)] <- det_counts$n
 
 wk_start_mat <- matrix(as.numeric(WeekGrid$wk_start), T_PRIM, N_SEC, byrow = TRUE)
@@ -546,9 +547,86 @@ RemovedTagged <- Fish |>
 # handled at the Oct-Dec netting of season y, from NFWG first captures plus the
 # CSV untagged counts (harvested, returned whether or not in the pool, morts).
 # This is the observed density covariate; it is per acre once areas are known.
-RecruitNFWG <- CaptureRecords |>
-  filter(!prev_tagged, month(cap_date) %in% RECRUIT_MONTHS, stage_cap < 3L) |>
+MIN_YOY_N <- 15L   # cohorts smaller than this fall back to a default (see below / RecruitYOYClassification.R)
+
+# Pond x season flag: does the bulk-harvested/returned untagged YOY record
+# for this season (data/BWNettingEvents.csv, Stage == "J") DOMINATE over the
+# individually-tagged untagged cohort handled at the same fall netting (i.e.
+# n_csv_bulk > n_tagged_raw)? A large dominant bulk record means the true
+# recruit cohort was already comprehensively handled that way (that's
+# exactly why it wasn't individually tagged -- too many fish, no time to tag
+# each one), so individually tagged fish from the same event are
+# presumptively established/carryover fish that finally got caught, not this
+# season's YOY. A magnitude comparison (not just "any bulk record exists") is
+# required: FY2017's CSV row is just 7 incidental morts alongside a real
+# 113-fish individually-tagged recruit cohort and must NOT trigger the
+# override, whereas FY2020's 2,877-fish bulk harvest (mean TL 152mm) against
+# only 52 individually-tagged fish (all TL 330-585mm, clearly established
+# adults) must. This flips the classifier default below from "assume YOY" to
+# "assume not YOY" for dominant-bulk pond-seasons, AND (further below) caps
+# any classified-YOY cluster to genuinely small TL in those same
+# pond-seasons regardless of sample size (2026-09-24 fix, Part B; see
+# AGENTS.md).
+NettingCSV_bulk <- NettingCSVraw |>
+  filter(Stage == "J", month(EventMonth) %in% RECRUIT_MONTHS) |>
+  mutate(season = season_of_date(EventMonth),
+         n_csv_evt = HarvestedUntagged + ReturnedUntagged + MortsUntagged) |>
+  group_by(pond, season) |>
+  summarise(n_csv_bulk = sum(n_csv_evt), .groups = "drop")
+
+TaggedCohortN <- CaptureRecords |>
+  filter(!prev_tagged, month(cap_date) %in% RECRUIT_MONTHS) |>
   mutate(season = season_of_date(cap_date)) |>
+  group_by(pond, season) |>
+  summarise(n_tagged_raw = n(), .groups = "drop")
+
+BulkYOYSeasons <- NettingCSV_bulk |>
+  left_join(TaggedCohortN, by = c("pond", "season")) |>
+  mutate(n_tagged_raw = replace_na(n_tagged_raw, 0L)) |>
+  filter(n_csv_bulk > n_tagged_raw) |>
+  distinct(pond, season) |>
+  mutate(has_bulk_csv = TRUE)
+
+# A netting cohort's untagged first-captures are not all this season's
+# young-of-year (YOY) recruits -- some are older untagged fish missed by a
+# prior netting, or long-established fish first captured now. Classify each
+# pond x season cohort with a Gaussian mixture on TL (mirrors the GIEL bimodal
+# reporting table in PopulationMonitoring.qmd, generalized in
+# model/RecruitYOYClassification.R) and keep only the YOY-classified fish
+# before computing the recruit density / size-split covariates below.
+#
+# Classification runs on the FULL untagged first-capture cohort (any TL), not
+# pre-filtered to sub-adult TL -- the stage_cap < 3L restriction is applied
+# AFTER classification instead. Pre-filtering before classifying truncates
+# away the very evidence (large, clearly-established fish) that lets the
+# mixture fit recognize a cohort as non-YOY; a truncated remainder can also
+# fall below MIN_YOY_N and default to "all YOY" even when the untruncated
+# cohort is obviously bimodal and entirely non-YOY (2026-09-24 fix, Part A;
+# see AGENTS.md for the FY2020 and FY2018 cases this corrected).
+RecruitYOYClassified <- CaptureRecords |>
+  filter(!prev_tagged, month(cap_date) %in% RECRUIT_MONTHS) |>
+  mutate(season = season_of_date(cap_date)) |>
+  left_join(BulkYOYSeasons, by = c("pond", "season")) |>
+  mutate(yoy_default = !coalesce(has_bulk_csv, FALSE)) |>
+  classify_yoy_df(TL, group_vars = c("pond", "season"), min_n = MIN_YOY_N,
+                   default_col = "yoy_default") |>
+  mutate(
+    # The small-n default above only covers cohorts too small to fit a
+    # mixture at all; it does NOT prevent the mixture from finding an
+    # internal "smaller" cluster that is still not YOY-sized (FY2020: n = 52
+    # >= MIN_YOY_N, mclust fits two established-fish modes at 343mm and
+    # 472mm, and the smaller one is labeled is_yoy by construction even
+    # though neither is close to that season's true 152mm bulk-harvested
+    # recruit mean). When a bulk YOY record exists for this pond-season, only
+    # trust a classified-YOY cluster if its own mean TL is genuinely small
+    # (< CSV_SMALL_MAX, the same threshold already used to treat bulk-CSV
+    # counts as stage S) -- otherwise it is just the smaller of two
+    # established-fish modes and should not be counted as a recruit.
+    is_yoy = is_yoy & !(coalesce(has_bulk_csv, FALSE) & mu1 >= CSV_SMALL_MAX)
+  )
+
+RecruitNFWG <- RecruitYOYClassified |>
+  filter(is_yoy, stage_cap < 3L) |>
   group_by(pond, season) |>
   summarise(n_tagged_juv = n(),
             n0 = sum(!is.na(TL)),                       # with a TL, eligible for the size split
@@ -708,7 +786,8 @@ RD_data <- list(
   ev_m = Netting$m, sp_nL = SplitObs$nL
 )
 
-BUILD_INFO_INPUTS <- c("model/YCB3S_data.R", "data/ReportingData.RData", "data/BWNettingEvents.csv",
+BUILD_INFO_INPUTS <- c("model/YCB3S_data.R", "model/RecruitYOYClassification.R",
+                       "data/ReportingData.RData", "data/BWNettingEvents.csv",
                        "data/BWPondAreas.csv", DIEOFF_FILE)
 BUILD_INFO <- list(
   built = Sys.time(),
@@ -732,11 +811,17 @@ save(Fish, Primary, PondTable, Netting, NettingCSV, Removals, RemovedTagged,
 cat("\nBuilt", OUT_FILE, "for ponds:", paste(PondTable$Backwater, collapse = ", "),
     "| calendar", CALENDAR, "(", N_MOY, "primaries/season, T =", T_PRIM, ")\n")
 cat("\nFish by origin (1 stocked, 2 netting-tagged, 3 established) / stage at entry (1 S, 2 L, 3 A):\n")
-print(Fish |> count(pond, origin, stage0) |>
+print(Fish |> dplyr::count(pond, origin, stage0) |>
         pivot_wider(names_from = stage0, values_from = n, values_fill = 0, names_prefix = "stage"))
-cat("\nRemoved tagged fish by type:\n"); print(Fish |> filter(removed) |> count(pond, rem_type))
+cat("\nRemoved tagged fish by type:\n"); print(Fish |> filter(removed) |> dplyr::count(pond, rem_type))
 cat("\nSame-event tagged-and-removed fish (counted as untagged harvest):", nrow(SameEventRemovals), "\n")
-cat("\nRecruit index and size split by season:\n")
+cat("\nYOY vs. carryover classification of fall-netting untagged first-captures, by pond x season:\n")
+print(RecruitYOYClassified |>
+        group_by(pond, season) |>
+        summarise(n = n(), G = first(G), n_yoy = sum(is_yoy), n_carryover = sum(!is_yoy), .groups = "drop") |>
+        mutate(Backwater = PondTable$Backwater[pond], FY = FIRST_FY + season - 1) |>
+        select(Backwater, FY, n, G, n_yoy, n_carryover) |> as.data.frame())
+cat("\nRecruit index and size split by season (n_tagged_juv/n0/nL now YOY-classified only):\n")
 print(RecruitIndex |> select(pond, season, n_tagged_juv, n_csv, rec_total, dens_std, n0, nL) |>
         mutate(pL_obs = round(nL / pmax(n0, 1), 2), dens_std = round(dens_std, 2)) |> as.data.frame())
 cat("\nNetting events (stage 1 S, 2 L, 3 A):\n")

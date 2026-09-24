@@ -30,6 +30,8 @@ packages(tidyr)
 packages(glmmTMB)
 packages(broom.mixed)
 packages(scales)
+packages(patchwork)
+packages(mclust)  # Gaussian mixture models for recruit size-class bimodality
 packages(recapr)  # Chapman mark-recapture estimates and bootstrap CIs
 load("data/ReportingData.RData")
 # Helper: save a plot as PNG and return it for inline display
@@ -388,7 +390,7 @@ if (run_yuma) {
     Date = SurvDaysYuma$Date,
     sex = unique(KnownSurvivalYuma$sex)
   ) |>
-    left_join(KnownSurvivalYuma |> count(Date, sex, name = "Count"),
+    left_join(KnownSurvivalYuma |> dplyr::count(Date, sex, name = "Count"),
               by = c("Date", "sex")) |>
     mutate(Count = replace_na(Count, 0))
   SurvivorCountsYuma$sex <- factor(SurvivorCountsYuma$sex,
@@ -423,6 +425,37 @@ if (run_yuma) describe_transfers(yuma_transfers)
 
 
 Known survivor counts at Yuma Cove peaked following the initial 2013 stocking and reflect the cumulative effect of multiple supplemental stocking events and natural recruitment over subsequent years. The persistent deficit in surviving males relative to females is consistent with the sex-biased post-stocking survival documented in the model and is a characteristic feature of RASU OCH populations across the LCR system (Marsh et al. 2024). Sudden step increases in the survivor trajectory correspond to netting and trapping events that PIT-tagged naturally recruited fish, adding them to the monitored population. Naturally recruited fish at first tagging ranged from 81 to 282 mm TL (median 170 mm) — well below the minimum stocking TL of `r SizeClass2` mm — confirming their origin as naturally produced fish rather than previously stocked adults. Approximately 100 natural recruits survived the 90-day post-tagging criterion in 2018 but disappeared by early 2019, an event consistent with density-dependent resource limitation; management shifted post-2018 toward periodic harvest to manage population size while continuing supplemental stockings. The majority of the current YCB PIT-tagged population consists of naturally recruited fish rather than surviving stocked adults.
+
+```{r yuma-recruit-size-hist}
+#| label: fig-yuma-recruit-size
+#| fig-cap: "Size at first capture of untagged Razorback Sucker recruits at Yuma Cove Backwater, by capture fiscal year (Oct–Dec captures defining each FY recruit cohort). Panels show all recruits (A), those detected ≥90 days after tagging (B), and those surviving into FY2024 (C)."
+#| fig-width: 6
+#| fig-height: 9
+if (run_yuma) {
+  YumaRecruitFY <- StudyBWAnalysis |>
+    filter(event == "capture", species == "XYTE", location == "Yuma Cove backwater",
+           !is.na(total_length), month(first_date) %in% 10:12) |>
+    mutate(CaptureFY = year(first_date) + 1L)
+  yuma_hist_one <- function(dat) {
+    ggplot(dat, aes(x = total_length, fill = factor(CaptureFY))) +
+      geom_histogram(binwidth = 10, position = "stack", color = "black") +
+      scale_fill_viridis_d(name = "Capture FY") +
+      labs(x = "Total Length at First Capture (mm)", y = "Count") +
+      theme_minimal() +
+      theme(axis.text = element_text(size = 9))
+  }
+  p_yuma_recruit_hist <-
+    yuma_hist_one(YumaRecruitFY) /
+    yuma_hist_one(YumaRecruitFY |> filter(Survived == 1)) /
+    yuma_hist_one(YumaRecruitFY |> filter(SurvivedFY24 == 1)) +
+    plot_layout(guides = "collect") +
+    plot_annotation(tag_levels = "A")
+  save_plot(p_yuma_recruit_hist, "YumaRecruitSizeHist.png", width = 6, height = 9)
+  p_yuma_recruit_hist
+}
+```
+
+Recruit size at the fall netting varies substantially by cohort year and tracks the number of recruits handled: years with relatively few recruits (e.g. FY2014, FY2017, FY2018) produced fish with a median total length near 300 mm by early winter, while years with several hundred recruits (e.g. FY2019, FY2023–FY2025) produced fish concentrated at 120–180 mm — a density-dependent growth signal similar to that documented for Bonytail recruits above. Unlike the Bonytail ponds, the size-at-capture distribution at YCB is dominated by a single lower mode in most years rather than a clear bimodal split, consistent with the companion growth and density analysis (`model/YCBSizeDensityEDA.qmd`), which found that re-sighting probability for tagged recruits stays flat (1–4%) from 100–300 mm and only rises sharply above 350 mm — the existing adult size threshold, not an intermediate juvenile stage.
 
 
 
@@ -772,7 +805,7 @@ if (run_ip_xyte) {
     location = unique(KnownSurvivalIPXYTE$location)
   ) |>
     left_join(KnownSurvivalIPXYTE |>
-                count(Date, sex, location, name = "Count"),
+                dplyr::count(Date, sex, location, name = "Count"),
               by = c("Date", "sex", "location")) |>
     mutate(Count = replace_na(Count, 0),
            Backwater = bw_label(location))
@@ -813,6 +846,35 @@ if (run_ip_xyte) describe_transfers(ipxyte_transfers)
 The minimum known survivor counts for RASU at each IPCA pond reflect the cumulative effect of initial and supplemental stocking events plus natural recruitment, reduced by natural attrition tracked through passive PIT scanning. Each stocking event appears as a step increase in the survivor trajectory, followed by a decline as fish are progressively lost to mortality or extended absence from scanner range.
 
 Natural recruitment into the PIT-tagged population was highly variable among XYTE ponds. Pond 1 had substantial and sustained natural recruitment — 242 recruits that survived the initial 90-day post-tagging period across seven cohort years (2017–2023), peaking at 70 recruits in 2022. In contrast, Ponds 3 and 4 had negligible recruitment: only 5 and 11 surviving recruits, respectively, across scattered years. These recruits were first encountered at sizes well below the minimum stocking TL (most were 100–300 mm at first capture), confirming their origin as naturally reproduced fish tagged during routine sampling. The disparity in natural recruitment between Pond 1 and Ponds 3 and 4 is notable and mirrors the pattern at YCB, where Pond 1 appears to provide more suitable spawning or nursery conditions or receives more intensive sampling effort sufficient to detect and tag juveniles. The persistent male deficit in survivor counts is consistent with the sex-biased post-stocking survival documented in the model and is expected given the patterns documented across all RASU OCH sites (Marsh et al. 2024).
+
+```{r ip-xyte-recruit-size-hist}
+#| label: fig-ip-xyte-recruit-size
+#| fig-cap: "Size at first capture of untagged Razorback Sucker recruits at IPCA Ponds 1, 3, and 4, by capture fiscal year (Oct–Dec captures defining each FY recruit cohort)."
+#| fig-width: 8
+#| fig-height: 7
+if (run_ip_xyte) {
+  XYTERecruitFY <- StudyBWAnalysis |>
+    filter(event == "capture", species == "XYTE",
+           location %in% c("IPCA (Pond 1)", "IPCA (Pond 3)", "IPCA (Pond 4)"),
+           !is.na(total_length), month(first_date) %in% 10:12) |>
+    mutate(CaptureFY = year(first_date) + 1L,
+           Backwater = bw_label(location))
+  if (nrow(XYTERecruitFY) > 0) {
+    p_ipxyte_recruit_hist <- ggplot(XYTERecruitFY, aes(x = total_length, fill = factor(CaptureFY))) +
+      geom_histogram(binwidth = 10, position = "stack", color = "black") +
+      facet_wrap(~Backwater, ncol = 1) +
+      scale_fill_viridis_d(name = "Capture FY") +
+      labs(x = "Total Length at First Capture (mm)", y = "Count") +
+      theme_minimal() +
+      theme(strip.text = element_text(face = "bold"),
+            axis.text = element_text(size = 9))
+    save_plot(p_ipxyte_recruit_hist, "IPXYTERecruitSizeHist.png", width = 8, height = 7)
+    p_ipxyte_recruit_hist
+  }
+}
+```
+
+Recruit size at capture reflects Pond 1's much larger and more consistent recruit sample, with fish spanning roughly 80–350 mm across the seven cohort years shown. Ponds 3 and 4 contributed too few recruits in any single year to characterize a cohort size distribution, consistent with the negligible sustained recruitment described above.
 
 
 
@@ -1124,7 +1186,7 @@ if (run_ip_giel) {
     location = unique(KnownSurvivalIPGIEL$location)
   ) |>
     left_join(KnownSurvivalIPGIEL |>
-                count(Date, sex, location, name = "Count"),
+                dplyr::count(Date, sex, location, name = "Count"),
               by = c("Date", "sex", "location")) |>
     mutate(Count = replace_na(Count, 0),
            Backwater = bw_label(location))
@@ -1160,11 +1222,76 @@ if (run_ip_giel) {
 if (run_ip_giel) describe_transfers(ipgiel_transfers)
 ```
 
+```{r ip-giel-recruit-size-hist}
+#| label: fig-ip-giel-recruit-size
+#| fig-cap: "Size at first capture of untagged Bonytail recruits at IPCA Ponds 2, 5, and 6, by capture fiscal year (Oct–Dec captures defining each FY recruit cohort). Panels show all recruits (A), those detected ≥90 days after tagging (B), and those surviving into FY2024 (C). Many cohorts show a visibly bimodal distribution, consistent with young-of-year and age-1+ fish captured together; mixture-model support for each cohort is summarized in @tbl-giel-bimodal."
+#| fig-width: 8
+#| fig-height: 11
+if (run_ip_giel) {
+  GIELRecruitFY <- StudyBWAnalysis |>
+    filter(event == "capture", species == "GIEL",
+           location %in% c("IPCA (Pond 2)", "IPCA (Pond 5)", "IPCA (Pond 6)"),
+           !is.na(total_length),
+           month(first_date) %in% 10:12) |>
+    mutate(CaptureFY = year(first_date) + 1L,
+           Backwater = bw_label(location))
+  giel_hist_one <- function(dat) {
+    ggplot(dat, aes(x = total_length, fill = factor(CaptureFY))) +
+      geom_histogram(binwidth = 10, position = "stack", color = "black") +
+      facet_wrap(~Backwater, ncol = 1) +
+      scale_fill_viridis_d(name = "Capture FY") +
+      labs(x = "Total Length at First Capture (mm)", y = "Count") +
+      theme_minimal() +
+      theme(strip.text = element_text(face = "bold"),
+            axis.text = element_text(size = 9))
+  }
+  p_giel_recruit_hist <-
+    giel_hist_one(GIELRecruitFY) /
+    giel_hist_one(GIELRecruitFY |> filter(Survived == 1)) /
+    giel_hist_one(GIELRecruitFY |> filter(SurvivedFY24 == 1)) +
+    plot_layout(guides = "collect") +
+    plot_annotation(tag_levels = "A")
+  save_plot(p_giel_recruit_hist, "IPGIELRecruitSizeHist.png", width = 8, height = 11)
+  p_giel_recruit_hist
+}
+```
 
+```{r ip-giel-bimodal-tab}
+#| label: tbl-giel-bimodal
+#| tbl-cap: "Gaussian mixture model (1 vs. 2 components, BIC-selected) fit to total length at first capture for Bonytail recruit cohorts with at least 15 fish (Oct–Dec netting, FY definition, Ponds 2/5/6 only). 'Size classes' is the number of components preferred by BIC; Mean 1 and Mean 2 are the component means in mm TL."
+if (run_ip_giel) {
+  bm_combos <- GIELRecruitFY |>
+    dplyr::count(Backwater, CaptureFY) |>
+    filter(n >= 15) |>
+    arrange(Backwater, CaptureFY)
+  bm_out <- vector("list", nrow(bm_combos))
+  for (i in seq_len(nrow(bm_combos))) {
+    b_bm <- bm_combos$Backwater[i]
+    fy_bm <- bm_combos$CaptureFY[i]
+    x_bm <- GIELRecruitFY |> filter(Backwater == b_bm, CaptureFY == fy_bm) |> pull(total_length)
+    m_bm <- mclust::Mclust(x_bm, G = 1:2, verbose = FALSE)
+    mu_bm <- sort(m_bm$parameters$mean)
+    bm_out[[i]] <- tibble::tibble(
+      Pond = b_bm, FY = fy_bm, N = length(x_bm),
+      `Size classes` = m_bm$G,
+      `Mean 1 (mm)` = round(mu_bm[1]),
+      `Mean 2 (mm)` = if (m_bm$G == 2) round(mu_bm[2]) else NA_real_
+    )
+  }
+  apply_table_style(
+    kable(bind_rows(bm_out),
+          col.names = c("Pond", "FY", "N captured", "Size classes",
+                        "Mean 1 (mm)", "Mean 2 (mm)"),
+          na.string = "—")
+  )
+}
+```
 
 The minimum known survivor trajectories for Bonytail at IPCA Ponds 2, 5, and 6 show a steeper rate of decline among stocked fish than observed in the RASU ponds. However, natural recruitment into the PIT-tagged population has been substantial at all three GIEL ponds — a key distinction from RASU Ponds 3 and 4 — and the recruit contribution makes the overall population trajectory more complex than a simple stocking-and-attrition curve.
 
-Pond 6 had the most consistent recruitment record, with 311 recruits surviving the 90-day post-tagging period across seven cohort years (2017–2024), peaking at 108 fish in 2022. Pond 2 had 394 surviving recruits across five cohort years, including a pulse of 162 recruits in 2023 — the largest single-year recruit cohort at any IP pond. Pond 5 had earlier recruitment (84 recruits in 2017–2019) but little recruitment in subsequent years (5 recruits combined in 2022–2023), suggesting less favorable conditions for reproduction or juvenile survival in recent years. A mass BONY spawning event was observed in Pond 2 on April 20, 2018, consistent with the high natural recruitment subsequently documented there (Swatzell et al. 2020). Recruits at first capture ranged from 74 to 233 mm TL across BONY ponds (medians of 139, 208, and 183 mm for Ponds 2, 5, and 6, respectively) — at or below the minimum stocking TL of 234 mm — confirming their origin as naturally produced fish rather than previously stocked adults.
+Using the fiscal-year, Oct–Dec-netting definition shown above, Pond 2 had the largest single-year recruit pulse: 162 of its 221 total surviving (≥90-day) recruits across 3 cohort years were captured in a single FY2024 netting. Pond 6 had the most consistent recruitment record, with 220 surviving recruits spread across 6 cohort years, peaking at 74 in FY2023. Pond 5 had comparatively little recruitment, with 81 surviving recruits across 5 cohort years, more than half (52) from a single FY2020 cohort. A mass BONY spawning event was observed in Pond 2 on April 20, 2018 (Swatzell et al. 2020), well before the much larger FY2024 recruit pulse documented here. Recruits at first capture ranged from 80 to 461 mm TL across the three ponds (pond medians of 149, 247, and 314 mm for Ponds 2, 5, and 6, respectively); 54% fall below the minimum recorded BONY stocking TL of 234 mm, while the remainder are large enough that they likely represent wild recruits that had already survived one or more growing seasons before their first capture.
+
+The size-at-capture distributions (@fig-ip-giel-recruit-size) reveal that many cohorts contain two distinct size classes rather than a single mixed group. A two-component Gaussian mixture model (@tbl-giel-bimodal) selects two size classes over one in 8 of 9 cohorts with at least 15 recruits, with the two components typically separated by 90–150 mm — for example, roughly 165 mm versus 320 mm fish captured together at Pond 6 in FY2020 and FY2023, and at Pond 5 in FY2020. This pattern is consistent with young-of-year recruits and age-1+ fish from the previous season being netted together at the same fall event, and aligns with the two-component mixture used to classify wild-hatched GIEL age classes in the age-based growth model (`model/GIEL_VBGF_AgeLength.R`). The two-size-class structure is less apparent when only the 90-day survivors or FY2024 survivors are shown, since the smaller (younger) recruits contribute fewer long-term survivors.
 
 
 
@@ -1307,6 +1434,8 @@ A structural refinement was also made to pond IP2's detection submodel. An earli
 `r if (run_giel_rd) giel_narrative_dJ`
 
 All core survival and detection hyperparameters converged well in the final model (R-hat <= 1.1), and the model's estimated number of tagged fish alive met or exceeded the minimum known survivor count in every pond and month, as required. A chronic pattern of low adult survival at IP2 in several non-die-off seasons (FY2018, FY2019, FY2021, FY2024, and FY2025) was not resolved by the detection fix and remains an open question for future investigation — it is not explained by either of the two documented die-off events and may indicate additional, currently unflagged mortality sources at that pond.
+
+This chronic low survival at IP2 also helps explain an apparent tension between the model's reliance on IP2 for juvenile survival information and the comparatively modest surviving-recruit counts reported for that pond above. Of every Bonytail ever tagged as a juvenile (<250 mm TL) across the three ponds, roughly three-quarters were tagged at IP2 — by far the largest juvenile sample of the three ponds, and the primary source of the data informing the model's shared juvenile survival and detection parameters. However, that large tagging sample does not translate into a proportionally large *surviving* (≥90-day) recruit count, because a large share of IP2's tagged juveniles did not survive: the pond's chronic low adult survival described above extends to the juvenile stage across most of the same seasons. The surviving-recruit counts presented earlier in this section (which necessarily exclude fish lost before the 90-day survival cutoff) therefore understate IP2's role in the underlying tagging and survival data relative to Ponds 5 and 6, where fewer juveniles were tagged in absolute terms but a comparatively larger share of them survived to be counted as recruits. In other words, IP2 supplies most of the juvenile *data* driving the joint model, while Ponds 5 and especially 6 supply a more representative picture of *successful* recruitment once early mortality is accounted for.
 
 ```{r export-estimates}
 #| label: export-estimates

@@ -32,15 +32,19 @@ packages(MCMCvis)
 packages(parallel)
 
 # Pond set and calendar select the data build and keep fits in separate files
-PONDS      <- c(1L, 2L, 4L, 5L)          # 1 = YCB; c(1, 2, 4, 5) = all XYTE (YCB, IP1, IP3, IP4)
-CALENDAR   <- "m12"                      # "m7" (Oct-Apr primaries) or "m12" (all months)
+if (!exists("PONDS")) PONDS <- c(1L, 2L, 4L, 5L)  # 1 = YCB; c(1, 2, 4, 5) = all XYTE (YCB, IP1, IP3, IP4)
+if (!exists("CALENDAR")) CALENDAR <- "m12"         # "m7" (Oct-Apr primaries) or "m12" (all months)
+# DEFS_FILE lets a diagnostic run source an alternate defs script (e.g. one
+# that overrides make_3s_inits() with anchored starting values) without
+# touching the default model/YCB3S_defs.R used by every other fit.
+if (!exists("DEFS_FILE")) DEFS_FILE <- "model/YCB3S_defs.R"
 PONDS      <- sort(as.integer(PONDS))
 pond_tag   <- if (identical(PONDS, 1L)) "" else
   if (identical(PONDS, c(1L, 2L, 4L, 5L))) "_xyte" else paste0("_p", paste(PONDS, collapse = ""))
 sfx        <- paste0(pond_tag, if (CALENDAR == "m12") "_m12" else "")
-DATA_FILE  <- paste0("data/YCB3S_data", sfx, ".RData")
-OUT_FILE   <- paste0("data/YCB3S_MCMC", sfx, ".RData")
-TRACE_FILE <- paste0("model/YCB3S_traceplots", sfx, ".pdf")
+if (!exists("DATA_FILE"))  DATA_FILE  <- paste0("data/YCB3S_data", sfx, ".RData")
+if (!exists("OUT_FILE"))   OUT_FILE   <- paste0("data/YCB3S_MCMC", sfx, ".RData")
+if (!exists("TRACE_FILE")) TRACE_FILE <- paste0("model/YCB3S_traceplots", sfx, ".pdf")
 load(DATA_FILE)
 stopifnot(identical(BUILD_INFO$CALENDAR, CALENDAR),
           identical(sort(as.integer(BUILD_INFO$MODEL_PONDS)), PONDS))
@@ -52,7 +56,7 @@ if (length(stale) > 0) {
   stop("Inputs newer than ", DATA_FILE, ": ", paste(BUILD_INFO$inputs[stale], collapse = ", "),
        ". Re-run model/YCB3S_data.R first.")
 }
-source("model/YCB3S_defs.R")
+source(DEFS_FILE)
 
 # ---------------------------------------------------------------------------
 # Run settings
@@ -76,11 +80,11 @@ t0 <- Sys.time()
 if (PARALLEL && N_CHAINS > 1) {
   cl <- makeCluster(N_CHAINS)
   on.exit(stopCluster(cl), add = TRUE)
-  clusterExport(cl, c("inp", "N_ITER", "N_BURNIN", "N_THIN", "DATA_FILE"))
+  clusterExport(cl, c("inp", "N_ITER", "N_BURNIN", "N_THIN", "DATA_FILE", "DEFS_FILE"))
   clusterEvalQ(cl, {
     library(dplyr); library(nimble); library(coda)
     load(DATA_FILE)
-    source("model/YCB3S_defs.R")
+    source(DEFS_FILE)
   })
   chain_list <- parLapply(cl, SEEDS[seq_len(N_CHAINS)], function(s)
     run_3s_chain(inp, s, N_ITER, N_BURNIN, N_THIN, progress = FALSE))
@@ -115,7 +119,7 @@ rd3_Hist <- inp$Hist
 rd3_settings <- list(N_CHAINS = N_CHAINS, N_ITER = N_ITER, N_BURNIN = N_BURNIN,
                      N_THIN = N_THIN, SEEDS = SEEDS, run_time = run_time,
                      MODEL_PONDS = MODEL_PONDS, StageBreaks = StageBreaks, BUILD_INFO = BUILD_INFO,
-                     CALENDAR = CALENDAR, PONDS = PONDS, DATA_FILE = DATA_FILE,
+                     CALENDAR = CALENDAR, PONDS = PONDS, DATA_FILE = DATA_FILE, DEFS_FILE = DEFS_FILE,
                      variant = paste(if (CALENDAR == "m12") "12-month calendar (May-Sep months are primaries);"
                                      else "Oct-Apr calendar (7 primaries/season);",
                                      "shared juvenile detection: lp[j, 2] <- lp[j, 1];",

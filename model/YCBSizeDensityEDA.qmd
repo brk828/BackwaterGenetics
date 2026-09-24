@@ -22,6 +22,9 @@ library(lubridate)
 library(knitr)
 library(kableExtra)
 library(mgcv)
+library(readxl)
+source("../LabFunctions.R")
+source("RecruitYOYClassification.R")
 load("../data/ReportingData.RData")
 rd <- new.env(); load("../data/BWRobustDesign_data.RData", envir = rd)
 theme_set(theme_bw(base_size = 12))
@@ -32,6 +35,47 @@ last_con <- ycb_con |> group_by(PITIndex) |> summarise(first_con = min(Date), la
 F1 <- rd$Fish |> filter(pond == 1) |> select(PITIndex, origin, stage0, removed, rem_date, rem_type)
 lw <- rd$LengthWeight |> filter(species == "XYTE")
 wt_g <- function(TL) exp(lw$a + lw$b * log(TL))
+PondAreas <- read_csv("../data/BWPondAreas.csv", show_col_types = FALSE)
+area_of <- function(backwater) PondAreas$Acres[PondAreas$Backwater == backwater]
+YCB_ACRES <- area_of("YCB")
+
+# Hand-maintained bulk untagged-YOY counts (data/BWNettingEvents.csv), needed
+# to (a) decide, per FY, whether that season's individually-tagged untagged
+# fish should default to "carryover" rather than "YOY" when a bulk record
+# already accounts for the true recruit cohort (mirrors the
+# n_csv_bulk > n_tagged_raw dominance rule in model/YCB3S_data.R, added
+# 2026-09-24), and (b) add the bulk count itself into recruit density, since
+# a bulk-processed cohort produced real recruits even though most were never
+# individually tagged/measured.
+CSV_SMALL_MAX <- 250
+netting_csv_raw <- read_csv("../data/BWNettingEvents.csv", show_col_types = FALSE) |>
+  filter(Backwater == YCB, Species == "XYTE") |>
+  mutate(EventMonth = ym(EventMonth), FY = fy_of(EventMonth))
+netting_csv_bulk <- netting_csv_raw |>
+  filter(Stage == "J", month(EventMonth) %in% 10:12) |>
+  mutate(n_csv_evt = HarvestedUntagged + ReturnedUntagged + MortsUntagged) |>
+  group_by(FY) |>
+  summarise(n_csv = sum(n_csv_evt), MeanTL_csv = weighted.mean(MeanTL, n_csv_evt, na.rm = TRUE), .groups = "drop")
+tagged_cohort_n <- StudyBWNFWG |>
+  filter(location == YCB, species == "XYTE", FirstRecord == "yes", event == "capture",
+         month(collection_date) %in% 10:12) |>
+  mutate(FY = fy_of(collection_date)) |>
+  dplyr::count(FY, name = "n_tagged_raw")
+bulk_dom_fy <- netting_csv_bulk |>
+  left_join(tagged_cohort_n, by = "FY") |>
+  mutate(n_tagged_raw = replace_na(n_tagged_raw, 0L)) |>
+  filter(n_csv > n_tagged_raw) |>
+  pull(FY)
+
+# Individually-measured subsample of the FY2020 bulk cohort (2,782 fish
+# harvested to Lake Mead Hatchery Nov 2019, aggregate mean TL 152 mm in
+# BWNettingEvents.csv): 730 of those fish (26%) were measured before transfer
+# and are archived with individual TL, giving a real size distribution for a
+# season the model otherwise only knows via a single mean.
+fy2020_subsample <- read_excel("../data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx", sheet = "LakeMeadFH") |>
+  transmute(TL = `TL (mm)`) |>
+  filter(!is.na(TL)) |>
+  mutate(FY = 2020L)
 ```
 
 ## Purpose
@@ -46,53 +90,139 @@ Questions:
 4. Does small-fish fate vary with recruit abundance or adult biomass among cohorts?
 5. Do the Imperial Ponds sit on the same curves?
 
-"Recruit" below means an untagged Razorback Sucker first handled at an Oct–Dec netting event at YCB (`FirstRecord == "yes"`, `event == "capture"`). Most are age-0 fish hatched the preceding spring, but in some years the pool includes untagged older fish, visible as an upper mode in the length distributions.
+"Recruit" below means an untagged Razorback Sucker first handled at an Oct–Dec netting event at YCB (`FirstRecord == "yes"`, `event == "capture"`). Some years' netting catches are visibly bimodal — a lower mode of genuinely young-of-year (YOY) fish and an upper mode of older untagged fish (fish that were simply missed by a prior year's netting, or long-established fish never previously captured). Because this document's whole purpose is to characterize *this season's* density-dependent growth and survival, every recruit-based table and figure below classifies each netting cohort with a per-fiscal-year Gaussian mixture model (`model/RecruitYOYClassification.R`) and uses **YOY-classified fish only**; the excluded carryover fish are shown separately in the classification table.
+
+A second complication, addressed for the first time in this revision (2026-09-24): in some seasons the true YOY cohort is so large that most of it is processed in bulk at the netting — counted and given a single aggregate mean length in `data/BWNettingEvents.csv`, but never individually tagged or measured. When that happens, the *individually tagged* fish handled at the same event are, almost by construction, established/carryover fish that finally got caught that year, not recruits — treating them as YOY (the classifier's historical small-sample default) would contaminate the size-split likelihood. Every recruit table/figure below therefore also applies the same bulk-dominance rule used in `model/YCB3S_data.R`: a season's individually-tagged untagged fish default to *non*-YOY, and any classified-YOY cluster is capped to genuinely small (< 250 mm) mean TL, whenever that season's bulk record (`n_csv`) exceeds its individually-tagged cohort (`n_tagged_raw`). At YCB this triggers only for **FY2020** (2,877 bulk-processed fish vs. 52 individually tagged, all 330–585 mm). See "Bulk-processed young-of-year cohorts" below for how FY2020 is handled without individual-fish data.
 
 ## Recruit size at the fall netting
 
 ```{r recruits}
-rec <- StudyBWNFWG |>
+rec_all <- StudyBWNFWG |>
   filter(location == YCB, species == "XYTE", FirstRecord == "yes", event == "capture", !is.na(total_length),
          month(collection_date) %in% 10:12) |>
-  mutate(FY = fy_of(collection_date), TL = total_length)
+  mutate(FY = fy_of(collection_date), TL = total_length,
+         yoy_default = !(FY %in% bulk_dom_fy)) |>
+  classify_yoy_df(TL, group_vars = "FY", min_n = 15, default_col = "yoy_default") |>
+  mutate(is_yoy = is_yoy & !(FY %in% bulk_dom_fy & mu1 >= CSV_SMALL_MAX))
+rec <- rec_all |> filter(is_yoy)
 rec_fy <- rec |>
   group_by(FY) |>
   summarise(n_rec = n(), med_TL = median(TL), q10 = quantile(TL, .1), q90 = quantile(TL, .9),
             p250 = mean(TL >= 250), p300 = mean(TL >= 300), p350 = mean(TL >= 350), .groups = "drop")
+# Recruit density (the covariate the model actually fits) adds the bulk CSV
+# count on top of individually-tagged YOY fish, exactly as
+# model/YCB3S_data.R's rec_total = n_tagged_juv + n_csv -- a bulk-processed
+# cohort is still real recruitment even when most of it was never tagged.
+rec_fy <- tibble(FY = sort(union(rec_fy$FY, netting_csv_bulk$FY))) |>
+  left_join(rec_fy, by = "FY") |>
+  left_join(netting_csv_bulk |> select(FY, n_csv), by = "FY") |>
+  mutate(across(c(n_rec, n_csv), ~ replace_na(.x, 0L)),
+         rec_total = n_rec + n_csv,
+         dens_per_acre = rec_total / YCB_ACRES)
+```
+
+### Young-of-year classification
+
+```{r}
+#| label: tbl-yoy
+#| tbl-cap: "Gaussian mixture model (1 vs. 2 components, BIC-selected) fit to total length at first capture for each YCB fall netting cohort. Cohorts too small to split (n < 15) default to a single component, labelled YOY unless that season's bulk-untagged record dominates the individually-tagged cohort (`Bulk-dominant` column), in which case the default flips to carryover; a classified-YOY cluster is additionally rejected if its own mean TL is >= 250 mm in a bulk-dominant season (FY2020). Mean 1 (YOY) and Mean 2 (carryover) are the component means in mm TL; n YOY and n carryover are the resulting fish counts used, or excluded, from every downstream table/figure in this document."
+yoy_tab <- rec_all |>
+  group_by(FY) |>
+  summarise(n = n(), G = first(G), mu1 = round(first(mu1)), mu2 = round(first(mu2)),
+            n_yoy = sum(is_yoy), n_carryover = sum(!is_yoy), .groups = "drop") |>
+  mutate(bulk_dominant = ifelse(FY %in% bulk_dom_fy, "yes", "—"))
+yoy_tab |>
+  select(FY, n, G, mu1, mu2, bulk_dominant, n_yoy, n_carryover) |>
+  kable(col.names = c("FY", "n captured", "Size classes", "Mean 1: YOY (mm)", "Mean 2: carryover (mm)", "Bulk-dominant", "n YOY", "n carryover"),
+        na.string = "—") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r}
+#| label: fig-yoy-hist
+#| fig-cap: "Total length of untagged first captures at YCB fall nettings, coloured by young-of-year vs. carryover classification (mixture-model MAP assignment)."
+#| fig-height: 5.5
+ggplot(rec_all, aes(x = TL, fill = ifelse(is_yoy, "YOY", "Carryover"))) +
+  geom_histogram(binwidth = 15, colour = "black") +
+  facet_wrap(~FY, scales = "free_y", ncol = 3) +
+  scale_fill_manual("Class", values = c(YOY = "steelblue", Carryover = "grey70")) +
+  labs(x = "Total length at first capture (mm)", y = "Count")
 ```
 
 ```{r}
 #| label: fig-rec-tl
-#| fig-cap: "Total length of untagged Razorback Sucker first handled at Oct–Dec netting events at YCB, by fiscal year. Point labels give the number of fish. Dashed lines at 250, 300, and 350 mm are candidate stage thresholds."
+#| fig-cap: "Total length of individually-measured, YOY-classified Razorback Sucker first handled at Oct–Dec netting events at YCB, by fiscal year. Point labels give the number of measured YOY fish. FY2020 is omitted (0 measured YOY that season -- see the bulk-processed subsample figure below). Dashed lines at 250, 300, and 350 mm are candidate stage thresholds."
 #| fig-height: 5
 ggplot(rec, aes(x = factor(FY), y = TL)) +
   geom_hline(yintercept = c(250, 300, 350), linetype = "dashed", colour = "grey60") +
   geom_violin(fill = "grey90", scale = "width") +
   geom_jitter(width = 0.15, size = 0.5, alpha = 0.4) +
-  geom_text(data = rec_fy, aes(y = 620, label = n_rec), size = 3) +
-  labs(x = "Fiscal year of netting", y = "Total length at first capture (mm)")
+  geom_text(data = rec_fy |> filter(n_rec > 0), aes(y = 400, label = n_rec), size = 3) +
+  labs(x = "Fiscal year of netting", y = "Total length at first capture (mm), YOY only")
 ```
 
 ```{r}
 #| label: tbl-rec
-#| tbl-cap: "Recruit size by netting year at YCB. p250/p300/p350 are the fraction of first-capture fish at or above each threshold."
+#| tbl-cap: "YOY recruit size and density (per surface acre; YCB = 2.6 acres) by netting year at YCB. `n (measured)` is individually-tagged/measured YOY fish (the only fish contributing size statistics); `n (bulk)` is the hand-maintained bulk-untagged count from `data/BWNettingEvents.csv` (no individual TL, except FY2020 -- see below); `Total / acre` is the density covariate the model actually fits (measured + bulk, per acre). p250/p300/p350 are the fraction of *measured* YOY fish at or above each threshold and are blank in bulk-only seasons."
 rec_fy |>
-  mutate(across(c(p250, p300, p350), ~round(.x, 2)), across(c(med_TL, q10, q90), round)) |>
-  kable(col.names = c("FY", "n", "Median TL", "10th pct", "90th pct", "≥ 250", "≥ 300", "≥ 350")) |>
+  mutate(across(c(p250, p300, p350), ~round(.x, 2)), across(c(med_TL, q10, q90), round),
+         dens_per_acre = round(dens_per_acre, 1)) |>
+  select(FY, n_rec, n_csv, dens_per_acre, med_TL, q10, q90, p250, p300, p350) |>
+  kable(col.names = c("FY", "n (measured)", "n (bulk)", "Total / acre", "Median TL", "10th pct", "90th pct", "≥ 250", "≥ 300", "≥ 350"),
+        na.string = "—") |>
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
 ```
 
 ```{r}
 #| label: fig-size-vs-n
-#| fig-cap: "Median recruit total length versus number of recruits handled, by netting year. Years with fewer than ~130 recruits produced fish near or above 300 mm by October; years with 270–500 recruits produced fish of 120–260 mm."
+#| fig-cap: "Median measured-YOY total length versus total YOY recruit density (measured + bulk, per acre), by netting year. FY2020 (open point) has no individually-measured YOY fish under the netting's own record-keeping -- its median TL instead comes from the 730-fish physically-measured subsample described below. Years with fewer than ~50 recruits/acre produced fish near or above 300 mm by October; denser years produced smaller fish by October."
 #| fig-height: 4.5
-ggplot(rec_fy, aes(x = n_rec, y = med_TL, label = FY)) +
-  geom_point(size = 2.5) +
+fy2020_med <- median(fy2020_subsample$TL)
+size_vs_n <- rec_fy |> mutate(med_TL = ifelse(FY == 2020, fy2020_med, med_TL), bulk_only = n_rec == 0)
+ggplot(size_vs_n, aes(x = dens_per_acre, y = med_TL, label = FY)) +
+  geom_point(aes(shape = bulk_only), size = 2.5) +
+  scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 1), guide = "none") +
   ggrepel::geom_text_repel(size = 3) +
-  labs(x = "Recruits handled at fall netting", y = "Median TL (mm)")
+  labs(x = "Total YOY recruits per acre at fall netting", y = "Median TL (mm)")
 ```
 
-Two caveats. First, years with an upper mode (FY2018, FY2020, FY2021, FY2024–FY2026) include untagged older fish, so the median overstates age-0 size in those years; the 10th percentile is a cleaner index of the age-0 mode. Second, the number handled reflects netting effort as well as abundance, though effort at YCB has been broadly similar across years.
+Caveat: the number handled reflects netting effort as well as abundance, though effort at YCB has been broadly similar across years. From here on, "recruit" means YOY-classified fish only unless stated otherwise; size-based figures (re-sighting, persistence, growth) necessarily use only the individually-measured subset, since bulk-processed fish carry no individual record (FY2020 excepted, via its measured subsample).
+
+### Bulk-processed young-of-year cohorts
+
+Some fall nettings handle far more recruits than can be individually tagged; the surplus is counted and given a single aggregate mean length in the hand-maintained `data/BWNettingEvents.csv` log instead. These bulk counts already flow into the recruit-density covariate above (`n (bulk)` / `Total / acre`), but they contribute nothing to any size-based figure elsewhere in this document unless, as happened once, a representative subsample was individually measured before disposition.
+
+```{r}
+#| label: tbl-bulk
+#| tbl-cap: "YCB fall (Oct-Dec) bulk untagged-YOY records from `data/BWNettingEvents.csv`. `Bulk-dominant` seasons are those where this bulk count exceeds that season's individually-tagged cohort, triggering the carryover-default/size-cap rules in the classification table above. FY2020's 730-fish measured subsample is described in the text below."
+netting_csv_bulk |>
+  mutate(MeanTL_csv = round(ifelse(is.nan(MeanTL_csv), NA_real_, MeanTL_csv)),
+         bulk_dominant = ifelse(FY %in% bulk_dom_fy, "yes", "no"),
+         subsample = ifelse(FY == 2020, "yes, n = 730", "no")) |>
+  left_join(tagged_cohort_n, by = "FY") |>
+  mutate(n_tagged_raw = replace_na(n_tagged_raw, 0L)) |>
+  select(FY, n_csv, MeanTL_csv, n_tagged_raw, bulk_dominant, subsample) |>
+  kable(col.names = c("FY", "Bulk count", "Bulk mean TL (mm)", "Individually tagged (same event)", "Bulk-dominant", "Measured subsample"),
+        na.string = "—") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+FY2020 is the only season where the bulk record dominates: 2,877 fish were harvested/returned at the November 2019 netting (aggregate mean 152 mm) against just 52 individually tagged fish, all 330–585 mm -- clearly established adults caught incidentally, not recruits, and now excluded from the YOY class by the dominance rule above. Uniquely for this cohort, 730 of the 2,877 harvested fish (26%) were individually measured before transfer to Lake Mead Hatchery (`data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx`), giving a real size distribution rather than a single mean.
+
+```{r}
+#| label: fig-fy2020-subsample
+#| fig-cap: "FY2020 recruit total length: the 730-fish individually-measured subsample of the bulk-harvested cohort (blue; mean 152 mm, matching the aggregate record) versus the 52 individually-tagged fish handled at the same netting, all classified as carryover, not YOY (grey). No fish appear in both groups."
+bind_rows(
+  fy2020_subsample |> mutate(group = "Bulk subsample (YOY)"),
+  rec_all |> filter(FY == 2020) |> transmute(TL, group = "Individually tagged (carryover)")
+) |>
+  ggplot(aes(TL, fill = group)) +
+  geom_histogram(binwidth = 10, colour = "black", position = "identity", alpha = 0.75) +
+  scale_fill_manual("", values = c("Bulk subsample (YOY)" = "steelblue", "Individually tagged (carryover)" = "grey70")) +
+  labs(x = "Total length (mm)", y = "Count", title = "FY2020 fall netting, YCB")
+```
+
+The subsample confirms the aggregate record (mean 151.7 mm, SD 21.3, range 100–220 mm) and shows no overlap at all with the individually-tagged fish's size range -- direct visual support for the dominance rule's conclusion that the two groups are genuinely different cohorts (this season's YOY vs. long-established carryover), not a single population split arbitrarily by tagging effort. The subsample's median TL is what populates FY2020 in @fig-size-vs-n above; it is not, however, available for the re-sighting or persistence analyses below (none of the 730 subsampled fish were tagged, so none could be followed afterward).
 
 ## Re-sighting probability by size at tagging
 
@@ -110,8 +240,12 @@ resight <- rec |>
 bins <- c(0, 150, 200, 250, 300, 350, 400, 500, 1000)
 resight_bin <- resight |>
   mutate(bin = cut(TL, bins, right = FALSE)) |>
-  group_by(bin) |>
-  summarise(n = n(), k = sum(reseen), lo = binom.test(k, n)$conf.int[1], hi = binom.test(k, n)$conf.int[2], reseen = k / n, .groups = "drop")
+  group_by(bin, .drop = FALSE) |>
+  summarise(n = n(), k = sum(reseen), .groups = "drop") |>
+  filter(n > 0) |>
+  rowwise() |>
+  mutate(lo = binom.test(k, n)$conf.int[1], hi = binom.test(k, n)$conf.int[2], reseen = k / n) |>
+  ungroup()
 gam_fit <- gam(reseen ~ s(TL, k = 8), family = binomial, data = resight)
 gam_pred <- tibble(TL = seq(100, 560, 5)) |> mutate(p = predict(gam_fit, cur_data(), type = "response"))
 ```
@@ -120,9 +254,10 @@ gam_pred <- tibble(TL = seq(100, 560, 5)) |> mutate(p = predict(gam_fit, cur_dat
 #| label: fig-resight-tl
 #| fig-cap: "Probability that a netting-tagged Razorback Sucker was contacted at YCB ≥ 365 days after tagging, by total length at tagging. Points are 50-mm bins with exact binomial 95% intervals (bin sample size labelled); the curve is a binomial GAM. Dashed lines at 250, 300, and 350 mm."
 #| fig-height: 4.5
-bin_mid <- head(bins, -1) + diff(bins) / 2
-bin_mid[length(bin_mid)] <- 550
-resight_bin$TLmid <- bin_mid
+bin_mid_all <- head(bins, -1) + diff(bins) / 2
+bin_mid_all[length(bin_mid_all)] <- 550
+bin_levels <- levels(cut(resight$TL, bins, right = FALSE))
+resight_bin$TLmid <- bin_mid_all[match(as.character(resight_bin$bin), bin_levels)]
 ggplot() +
   geom_vline(xintercept = c(250, 300, 350), linetype = "dashed", colour = "grey60") +
   geom_line(data = gam_pred, aes(TL, p), colour = "steelblue") +
@@ -210,37 +345,41 @@ biomass <- tibble(FY = 2014:2026, d = as.Date(paste0(FY - 1, "-10-01"))) |>
          n_alive = nrow(alive), n_adult = sum(alive$TL2 >= 350, na.rm = TRUE),
          kg_adult = sum(wt_g(alive$TL2[!is.na(alive$TL2) & alive$TL2 >= 350])) / 1000,
          kg_all = sum(wt_g(alive$TL2[!is.na(alive$TL2)])) / 1000) |>
-  ungroup() |> select(-alive, -d)
+  ungroup() |> select(-alive, -d) |>
+  mutate(kg_adult_acre = kg_adult / YCB_ACRES, kg_all_acre = kg_all / YCB_ACRES,
+         n_adult_acre = n_adult / YCB_ACRES)
 cohort <- biomass |>
-  left_join(rec_fy |> select(FY, n_rec, med_TL, q10, p300), by = "FY") |>
+  left_join(rec_fy |> select(FY, n_rec, n_csv, dens_per_acre, med_TL, q10, p300), by = "FY") |>
   left_join(persist_fy |> select(FY, n_small = n, small_gt365 = gt365), by = "FY") |>
-  filter(FY >= 2014, FY <= 2025, !is.na(n_rec))
+  filter(FY >= 2014, FY <= 2025, !is.na(dens_per_acre))
 ```
 
 ```{r}
 #| label: tbl-cohort
-#| tbl-cap: "Cohort table for YCB. Known-alive counts and biomass are at 1 October of the fiscal year (tagged fish only; a lower bound on the true standing stock). Recruit columns describe untagged fish first handled that Oct–Dec; small-fish survival is the fraction of < 300 mm tagged recruits contacted > 365 days later. FY2021–FY2022 survival is unobservable (scanner gap)."
+#| tbl-cap: "Cohort table for YCB, all densities/biomass per surface acre (YCB = 2.6 acres). Known-alive counts and biomass are at 1 October of the fiscal year (tagged fish only; a lower bound on the true standing stock). `YOY measured`/`YOY bulk` are the individually-measured and bulk-only components of that season's recruit cohort (see 'Bulk-processed young-of-year cohorts' above); `Total / acre` (measured + bulk) is the density covariate the model fits. Size columns (Median TL, 10th pct, >= 300 mm) reflect measured fish only and are blank for FY2020 (bulk-dominant, 0 measured). Small-fish survival is the fraction of < 300 mm tagged YOY recruits contacted > 365 days later. FY2021-FY2022 survival is unobservable (scanner gap)."
 cohort |>
-  mutate(across(c(kg_adult, kg_all), ~round(.x)), across(c(med_TL, q10), round), p300 = round(p300, 2)) |>
-  select(FY, n_alive, n_adult, kg_adult, n_rec, med_TL, q10, p300, n_small, small_gt365) |>
-  kable(col.names = c("FY", "Known alive (tagged)", "of which ≥ 350", "Adult biomass (kg)", "Recruits handled", "Median TL", "10th pct TL", "≥ 300 mm", "Small tagged", "Small survival > 1 yr")) |>
+  mutate(across(c(kg_adult_acre, kg_all_acre), ~round(.x, 1)), across(c(med_TL, q10), round),
+         p300 = round(p300, 2), dens_per_acre = round(dens_per_acre, 1)) |>
+  select(FY, n_alive, n_adult, kg_adult_acre, n_rec, n_csv, dens_per_acre, med_TL, q10, p300, n_small, small_gt365) |>
+  kable(col.names = c("FY", "Known alive (tagged)", "of which ≥ 350", "Adult biomass (kg/acre)", "YOY measured", "YOY bulk", "Total / acre", "Median TL", "10th pct TL", "≥ 300 mm", "Small tagged", "Small survival > 1 yr"),
+        na.string = "—") |>
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
 ```
 
 ```{r}
 #| label: fig-cohort
-#| fig-cap: "Cohort-level relationships at YCB. Left: fraction of recruits ≥ 300 mm at netting versus recruits handled. Right: small-fish survival to one year versus recruits handled; point colour is tagged adult biomass at the start of the fiscal year. FY2021 and FY2022 (scanner gap) are excluded from the right panel."
+#| fig-cap: "Cohort-level relationships at YCB. Left: fraction of YOY recruits ≥ 300 mm at netting versus YOY recruit density (per acre). Right: small-fish survival to one year versus YOY recruit density; point colour is tagged adult biomass per acre at the start of the fiscal year. FY2021 and FY2022 (scanner gap) are excluded from the right panel."
 #| fig-height: 4.5
-p1 <- ggplot(cohort, aes(n_rec, p300, label = FY)) + geom_point(size = 2.5) + ggrepel::geom_text_repel(size = 3) +
-  labs(x = "Recruits handled", y = "Fraction of recruits ≥ 300 mm")
+p1 <- ggplot(cohort, aes(dens_per_acre, p300, label = FY)) + geom_point(size = 2.5) + ggrepel::geom_text_repel(size = 3) +
+  labs(x = "YOY recruits per acre", y = "Fraction of recruits ≥ 300 mm")
 p2 <- cohort |> filter(!FY %in% c(2021, 2022), !is.na(small_gt365)) |>
-  ggplot(aes(n_rec, small_gt365, colour = kg_adult, label = FY)) + geom_point(size = 3) + ggrepel::geom_text_repel(size = 3, colour = "black") +
-  scale_colour_viridis_c("Adult\nbiomass (kg)") +
-  labs(x = "Recruits handled", y = "Small-fish survival to 1 yr")
+  ggplot(aes(dens_per_acre, small_gt365, colour = kg_adult_acre, label = FY)) + geom_point(size = 3) + ggrepel::geom_text_repel(size = 3, colour = "black") +
+  scale_colour_viridis_c("Adult biomass\n(kg/acre)") +
+  labs(x = "YOY recruits per acre", y = "Small-fish survival to 1 yr")
 patchwork::wrap_plots(p1, p2)
 ```
 
-Recruit size falls steeply with recruit number, which is the density-dependent growth signal. Small-fish survival is essentially binary across the observable cohorts: high in the one small cohort (FY2018) and near zero in every cohort of 125 or more recruits. Tagged adult biomass varies only between about 190 and 270 kg over FY2017–FY2025 and does not separate the surviving cohort from the others, so with the data in hand recruit density, not adult biomass, is the covariate with leverage. That is a thin basis for a fitted slope — effectively one surviving cohort against four or five lost ones — and the model should treat the density effect on survival as a hypothesis to be estimated with a regularizing prior rather than a well-determined quantity.
+Recruit size falls steeply with YOY recruit density, which is the density-dependent growth signal. Small-fish survival is essentially binary across the observable cohorts: high in the one small cohort (FY2018) and near zero in every cohort with substantial YOY density. Tagged adult biomass per acre varies only modestly over FY2017–FY2025 and does not separate the surviving cohort from the others, so with the data in hand recruit density, not adult biomass, is the covariate with leverage. That is a thin basis for a fitted slope — effectively one surviving cohort against four or five lost ones — and the model should treat the density effect on survival as a hypothesis to be estimated with a regularizing prior rather than a well-determined quantity. Reporting density per acre (rather than raw counts) is what makes this relationship comparable across YCB and the much larger IP ponds below.
 
 ## Growth increments
 
@@ -248,7 +387,7 @@ Recruit size falls steeply with recruit number, which is the density-dependent g
 gr <- StudyBWGrowth |> filter(location == YCB, species == "XYTE", YAL < 1.6)
 gr |>
   mutate(sizebin = cut(FirstTL, c(0, 250, 350, 450, 1000), right = FALSE)) |>
-  count(FYtag = fy_of(FirstDate), sizebin) |>
+  dplyr::count(FYtag = fy_of(FirstDate), sizebin) |>
   pivot_wider(names_from = sizebin, values_from = n, values_fill = 0) |>
   kable(caption = "Fish with a physical recapture 1–1.6 years after tagging at YCB, by tagging year and size at tagging. Juvenile recaptures are too few to estimate density-dependent growth from increments.") |>
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
@@ -259,43 +398,53 @@ Physical recaptures of juveniles a year after tagging are almost nonexistent (th
 ## Imperial Ponds preview
 
 ```{r ip}
-ip <- tibble(location = c("IPCA (Pond 1)", "IPCA (Pond 3)", "IPCA (Pond 4)"), LID = c(1043L, 1045L, 1046L), Site = c("Pond 1", "Pond 3", "Pond 4"))
+ip <- tibble(location = c("IPCA (Pond 1)", "IPCA (Pond 3)", "IPCA (Pond 4)"),
+             LID = c(1043L, 1045L, 1046L), Site = c("Pond 1", "Pond 3", "Pond 4"),
+             Backwater = c("IP1", "IP3", "IP4")) |>
+  mutate(Acres = map_dbl(Backwater, area_of))
 ip_rec <- StudyBWNFWG |>
   filter(location %in% ip$location, species == "XYTE", FirstRecord == "yes", event == "capture", !is.na(total_length), disposition == "released") |>
   inner_join(ip, by = "location") |>
-  mutate(FY = fy_of(collection_date), TL = total_length, tag_date = collection_date)
+  mutate(FY = fy_of(collection_date), TL = total_length, tag_date = collection_date) |>
+  classify_yoy_df(TL, group_vars = c("Site", "FY"), min_n = 15)
 ip_last <- StudyBWContacts |> filter(LID %in% ip$LID) |> group_by(LID, PITIndex) |> summarise(last_con = max(Date), .groups = "drop")
-ip_resight <- ip_rec |>
+ip_resight_all <- ip_rec |>
   left_join(rd$Fish |> select(PITIndex, location, removed, rem_date), by = c("PITIndex", "location")) |>
   filter(is.na(removed) | !removed | rem_date >= tag_date + 365, tag_date <= as.Date("2025-07-01")) |>
   left_join(ip_last, by = c("LID", "PITIndex")) |>
   mutate(reseen = !is.na(last_con) & last_con >= tag_date + 365,
          cls = cut(TL, c(0, 250, 350, 1000), labels = c("< 250", "250–349", "≥ 350"), right = FALSE))
+ip_resight <- ip_resight_all |> filter(is_yoy)
 ```
 
 ```{r}
 #| label: tbl-ip
-#| tbl-cap: "Imperial Ponds Razorback Sucker: untagged fish first handled at netting (any month), by pond and fiscal year — count, median TL, and re-sighting ≥ 1 year later by size class (n in parentheses)."
+#| tbl-cap: "Imperial Ponds Razorback Sucker: YOY-classified untagged fish first handled at netting (any month), by pond and fiscal year — count, YOY density per acre, median TL, and re-sighting ≥ 1 year later by size class (n in parentheses)."
 ip_resight |>
-  group_by(Site, FY) |>
+  group_by(Site, FY, Acres) |>
   summarise(n = n(), med_TL = round(median(TL)),
             small = sprintf("%.2f (%d)", mean(reseen[cls == "< 250"]), sum(cls == "< 250")),
             mid = sprintf("%.2f (%d)", mean(reseen[cls == "250–349"]), sum(cls == "250–349")),
             adult = sprintf("%.2f (%d)", mean(reseen[cls == "≥ 350"]), sum(cls == "≥ 350")), .groups = "drop") |>
-  mutate(across(c(small, mid, adult), ~str_replace(.x, "NaN \\(0\\)", "—"))) |>
+  mutate(across(c(small, mid, adult), ~str_replace(.x, "NaN \\(0\\)", "—")),
+         dens_per_acre = round(n / Acres, 1)) |>
   filter(n >= 5) |>
-  kable(col.names = c("Pond", "FY", "n", "Median TL", "< 250", "250–349", "≥ 350")) |>
+  select(Site, FY, n, dens_per_acre, med_TL, small, mid, adult) |>
+  kable(col.names = c("Pond", "FY", "n (YOY)", "YOY / acre", "Median TL", "< 250", "250–349", "≥ 350")) |>
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
   collapse_rows(columns = 1, valign = "top")
 ```
 
-The Imperial Ponds handle far fewer untagged recruits per year than YCB and, where sample sizes allow, small tagged fish there are re-seen at rates an order of magnitude above YCB's large cohorts. Whether that places the IP ponds on the low-density end of a single YCB-derived curve, or reflects a categorical difference between sites, is exactly what the Phase 4 extension will test — it needs pond surface areas to put recruit numbers on a per-acre scale.
+The Imperial Ponds handle far fewer YOY recruits per acre per year than YCB and, where sample sizes allow, small tagged fish there are re-seen at rates an order of magnitude above YCB's large cohorts. Whether that places the IP ponds on the low-density end of a single YCB-derived curve, or reflects a categorical difference between sites, is exactly what the Phase 4 extension will test.
 
 ## Conclusions for the model design
 
-1. **Density-dependent first-season growth is well supported.** Recruit size at the fall netting drops from ~300 mm in years with < 130 recruits to 120–180 mm in years with ~300–500. Model the fraction of recruits at or above the S/L threshold as a function of recruit density (`pL[y]`), with the observed size split at netting as its likelihood.
+1. **Density-dependent first-season growth is well supported.** Recruit size at the fall netting drops as YOY recruit density rises, from cohorts producing fish near or above 300 mm by October in low-density years to 120–180 mm in the densest years. Model the fraction of recruits at or above the S/L threshold as a function of YOY recruit density (`pL[y]`), with the observed size split at netting as its likelihood.
 2. **The S/L threshold is not visible in the pooled survival curve.** Re-sighting is flat at 1–4 % up to 300 mm and only rises at 350 mm. A threshold of **300 mm** is the defensible choice: it is where the curve begins to rise, it separates the age-0 modes of low- and high-density years, and a 300-mm recruit reaches the 350-mm adult class within its second season. Using 250 mm would put many high-density-year recruits in the L class with no evidence they fare better than S fish.
 3. **Small-fish loss is an overwinter event in dense cohorts**, occurring 2–4 months after tagging, not at tagging. In the model this argues for letting the density effect act on S-stage survival through the first Oct–Apr season (which the existing 6-month post-release window largely spans) rather than as a constant offset for the whole juvenile stage.
-4. **The survival covariate has little contrast.** Adult tagged biomass is nearly constant across cohorts; recruit density varies but the outcome is nearly binary and rests on one surviving cohort. Fit `cB` (or a recruit-density analogue) with a regularizing prior, report it with its interval, and expect it to be poorly determined until the IP ponds contribute low-density contrast.
+4. **The survival covariate has little contrast.** Adult tagged biomass per acre is nearly constant across cohorts; YOY recruit density varies but the outcome is nearly binary and rests on one surviving cohort. Fit `cB` (or a recruit-density analogue) with a regularizing prior, report it with its interval, and expect it to be poorly determined until the IP ponds contribute low-density contrast.
 5. **Growth increments cannot inform maturation rates**; keep `psi_SL` and `psi_LA` density independent.
-6. **Open data need:** surface areas for YCB and IP Ponds 1, 3, 4 so that densities are comparable across sites.
+6. **Recruit counts, densities, and size-split likelihoods should all be built from YOY-classified fish only.** Fall nettings at YCB and the IP ponds routinely include older untagged fish (carryover from a prior season, or long-established fish captured for the first time); a per-cohort Gaussian mixture model (`model/RecruitYOYClassification.R`, the same approach already used for GIEL reporting) separates them from the genuine age-0 mode. `model/YCB3S_data.R`'s `RecruitIndex`/`SplitObs` construction has been updated to apply this classification before computing recruit density and the S/L size split.
+7. **Densities and biomass are now reported per surface acre** (`data/BWPondAreas.csv`), which is what makes this YCB-derived relationship directly comparable to the IP ponds in future phases.
+8. **Bulk-processed cohorts (FY2020 at YCB) need their own handling, both here and in `model/YCB3S_data.R`.** When the true YOY cohort is large enough to be counted only in bulk (`data/BWNettingEvents.csv`, no individual TL), the individually-tagged fish from the same event are established/carryover fish, not recruits, and must not default to YOY the way a genuinely small individually-tagged sample would. The fix applied here and in the data-build script: flip the classifier's small-sample default to "not YOY," and reject any classified-YOY cluster whose own mean TL is >= 250 mm, whenever a season's bulk count exceeds its individually-tagged cohort (`n_csv_bulk > n_tagged_raw`). The bulk count itself still enters recruit density (`rec_total = n_measured + n_bulk`) even though it contributes no individual sizes. Where a physically-measured subsample of the bulk cohort exists (FY2020: 730 of 2,877 fish, `data/20191106_XYTE_YUMABW_YC19 Fin Clips.xlsx`), it should be used for any size-dependent quantity that season instead of leaving it blank.
+9. **This should not be confused with the continuous-mean-TL likelihood idea (Part C, deferred).** The size split (`pLg`/`a1`) and recruit-density covariates use only counts, not the bulk record's mean TL itself; adding a `MeanTL_csv ~ Normal(mu0 + mu1 * dens_std, ...)` term to give the model a genuine continuous size-density relationship from the handful of bulk-mean seasons remains a documented but unimplemented follow-up (see `AGENTS.md`).
